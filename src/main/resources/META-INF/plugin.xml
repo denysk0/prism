@@ -1,0 +1,14 @@
+<idea-plugin>
+  <id>com.prism</id>
+  <name>Prism</name>
+  <vendor>Prism</vendor>
+
+  <depends>com.intellij.modules.platform</depends>
+  <depends>com.intellij.java</depends>
+  <depends>com.intellij.mcpServer</depends>
+
+  <extensions defaultExtensionNs="com.intellij">
+    <mcpServer.mcpToolset implementation="com.prism.mcp.GetContextCapsuleToolset"/>
+    <toolWindow id="Prism" anchor="right" factoryClass="com.prism.ui.PrismToolWindowFactory"/>
+  </extensions>
+</idea-plugin>
