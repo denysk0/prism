@@ -27,15 +27,21 @@ java {
 }
 
 dependencies {
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+
     intellijPlatform {
         intellijIdeaCommunity(providers.gradleProperty("platformVersion"))
         bundledPlugin("com.intellij.java")
         bundledPlugin("com.intellij.mcpServer")
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
+        testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Bundled)
     }
 
     testImplementation(platform("org.junit:junit-bom:5.14.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
+    testImplementation("junit:junit:4.13.2")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    testRuntimeOnly("org.junit.vintage:junit-vintage-engine")
 }
 
 intellijPlatform {
