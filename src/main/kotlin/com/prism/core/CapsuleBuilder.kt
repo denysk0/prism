@@ -6,7 +6,6 @@ import com.intellij.openapi.util.Computable
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.psi.PsiFile
 import com.intellij.psi.PsiManager
-import com.intellij.psi.util.PsiTreeUtil
 import com.prism.backend.JavaBackend
 import com.prism.backend.LanguageBackend
 import com.prism.backend.Section
@@ -41,7 +40,7 @@ class CapsuleBuilder(
             emptyList()
         }
 
-        return renderer.toJson(
+        val capsule = renderer.toJson(
             sections = sections,
             stats = CapsuleStats(
                 tokens = tokens,
@@ -51,6 +50,8 @@ class CapsuleBuilder(
             ),
             omitted = omitted,
         )
+        project.messageBus.syncPublisher(CapsulePublishedTopic.TOPIC).capsulePublished(capsule)
+        return capsule
     }
 
     private fun backendFor(psiFile: PsiFile?): LanguageBackend? =
