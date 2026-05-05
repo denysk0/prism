@@ -34,6 +34,7 @@ dependencies {
         local(providers.gradleProperty("localIdeaPath"))
         bundledPlugin("com.intellij.java")
         bundledPlugin("com.intellij.mcpServer")
+        bundledPlugin("org.jetbrains.kotlin")
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Bundled)
     }
