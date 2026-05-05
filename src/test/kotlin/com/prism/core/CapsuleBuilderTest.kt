@@ -101,7 +101,23 @@ class CapsuleBuilderTest : LightJavaCodeInsightFixtureTestCase() {
     }
 
     fun testBuildReturnsOmittedTargetForUnsupportedFile() = runBlocking {
-        val filePath = createProjectFile(
+        val filePath = createProjectFile("notes.txt", "hello world\nplain text\n")
+
+        val root = buildCapsule(filePath.toString(), line = 2)
+
+        assertTargetOmitted(root)
+    }
+
+    fun testDefaultBackendForJava() {
+        val file = myFixture.configureByText("Sample.java", "class Sample {}")
+
+        val backend = CapsuleBuilder.defaultBackendFor(file, CharsBy4Estimator)
+
+        assertTrue(backend is com.prism.backend.JavaBackend)
+    }
+
+    fun testDefaultBackendForKotlin() {
+        val file = myFixture.configureByText(
             "Sample.kt",
             """
                 class Sample {
@@ -110,9 +126,17 @@ class CapsuleBuilderTest : LightJavaCodeInsightFixtureTestCase() {
             """.trimIndent(),
         )
 
-        val root = buildCapsule(filePath.toString(), line = 2)
+        val backend = CapsuleBuilder.defaultBackendFor(file, CharsBy4Estimator)
 
-        assertTargetOmitted(root)
+        assertTrue(backend is com.prism.backend.KotlinUastBackend)
+    }
+
+    fun testDefaultBackendForUnsupportedReturnsNull() {
+        val file = myFixture.configureByText("notes.txt", "plain text")
+
+        val backend = CapsuleBuilder.defaultBackendFor(file, CharsBy4Estimator)
+
+        assertNull(backend)
     }
 
     fun testBuildReturnsOmittedTargetForFileOutsideProject() = runBlocking {

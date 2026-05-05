@@ -7,6 +7,7 @@ import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
 import com.prism.backend.BackendResult
 import com.prism.backend.JavaBackend
+import com.prism.backend.KotlinUastBackend
 import com.prism.backend.LanguageBackend
 import com.prism.backend.Section
 import com.prism.backend.SectionKind
@@ -24,12 +25,7 @@ class CapsuleBuilder(
     private val renderer: CapsuleRenderer = CapsuleRenderer,
     private val operationTimeoutMillis: Long = DEFAULT_OPERATION_TIMEOUT_MILLIS,
     private val overallTimeoutMillis: Long = DEFAULT_OVERALL_TIMEOUT_MILLIS,
-    private val backendFactory: (PsiFile, TokenEstimator) -> LanguageBackend? = { psiFile, tokenEstimator ->
-        when (psiFile.language.id) {
-            "JAVA" -> JavaBackend(tokenEstimator)
-            else -> null
-        }
-    },
+    private val backendFactory: (PsiFile, TokenEstimator) -> LanguageBackend? = ::defaultBackendFor,
 ) {
     suspend fun build(project: Project, filePath: String, line: Int, budget: Int = 2000): String {
         val resolvedPath = resolveFilePath(project, filePath)
@@ -222,12 +218,19 @@ class CapsuleBuilder(
         val omitted: List<OmittedSection>,
     )
 
-    private companion object {
-        const val UNAVAILABLE_NAIVE_TOKENS = -1
-        const val DEFAULT_OPERATION_TIMEOUT_MILLIS = 2_000L
-        const val DEFAULT_OVERALL_TIMEOUT_MILLIS = 5_000L
+    companion object {
+        fun defaultBackendFor(psiFile: PsiFile, estimator: TokenEstimator): LanguageBackend? =
+            when (psiFile.language.id) {
+                "JAVA" -> JavaBackend(estimator)
+                "kotlin" -> KotlinUastBackend(estimator)
+                else -> null
+            }
 
-        val BACKEND_EXECUTOR = Executors.newCachedThreadPool(
+        internal const val UNAVAILABLE_NAIVE_TOKENS = -1
+        internal const val DEFAULT_OPERATION_TIMEOUT_MILLIS = 2_000L
+        internal const val DEFAULT_OVERALL_TIMEOUT_MILLIS = 5_000L
+
+        private val BACKEND_EXECUTOR = Executors.newCachedThreadPool(
             ThreadFactory { runnable ->
                 Thread(runnable, "Prism Capsule Backend").apply {
                     isDaemon = true
