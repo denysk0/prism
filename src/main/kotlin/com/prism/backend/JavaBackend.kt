@@ -74,7 +74,8 @@ class JavaBackend(
                 } else {
                     SectionKind.EXTERNAL_CALLEES
                 }
-                callees += Section(kind, method.text, estimator.estimate(method.text))
+                val text = calleeContext(method)
+                callees += Section(kind, text, estimator.estimate(text))
             }
 
         return callees
@@ -127,8 +128,46 @@ class JavaBackend(
 
     private fun methodSkeleton(method: PsiMethod): String {
         val body = method.body ?: return method.text.trimEnd()
+        return methodSignature(method) + " { /* body omitted */ }"
+    }
+
+    private fun methodSignature(method: PsiMethod): String {
+        val body = method.body ?: return method.text.trimEnd()
         val signatureEnd = body.textRange.startOffset - method.textRange.startOffset
-        return method.text.substring(0, signatureEnd).trimEnd() + " { /* body omitted */ }"
+        return method.text.substring(0, signatureEnd).trimEnd()
+    }
+
+    private fun calleeContext(method: PsiMethod): String {
+        val summary = docSummary(method)
+        val signature = methodSignature(method)
+        val firstBodyLine = method.body
+            ?.statements
+            ?.firstOrNull()
+            ?.text
+            ?.lineSequence()
+            ?.firstOrNull { line -> line.isNotBlank() }
+            ?.trim()
+
+        return buildString {
+            if (summary != null) {
+                appendLine("/** $summary */")
+            }
+            append(signature)
+            if (firstBodyLine != null) {
+                appendLine()
+                append("// $firstBodyLine")
+            }
+        }
+    }
+
+    private fun docSummary(method: PsiMethod): String? {
+        val rawSummary = method.docComment
+            ?.descriptionElements
+            ?.joinToString(" ") { element -> element.text.trim() }
+            ?.replace(Regex("\\s+"), " ")
+            ?.trim()
+
+        return rawSummary?.takeIf { it.isNotBlank() }
     }
 
     private fun methodKey(method: PsiMethod): String {

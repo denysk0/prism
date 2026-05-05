@@ -152,4 +152,35 @@ class JavaBackendTest : LightJavaCodeInsightFixtureTestCase() {
         assertTrue(text.contains("int second()"))
         assertTrue(text.contains("int third()"))
     }
+
+    fun testExtractCalleesUsesCompactContext() {
+        val file = myFixture.configureByText(
+            "Sample.java",
+            """
+                class Sample {
+                    int selected() {
+                        return helper();
+                    }
+
+                    /**
+                     * Computes the helper value.
+                     */
+                    int helper() {
+                        int value = 7;
+                        return value;
+                    }
+                }
+            """.trimIndent(),
+        )
+        val method = PsiTreeUtil.findChildrenOfType(file, PsiMethod::class.java)
+            .single { it.name == "selected" }
+
+        val section = JavaBackend().extractCallees(method).single()
+
+        assertEquals(SectionKind.INTERNAL_CALLEES, section.kind)
+        assertTrue(section.text.contains("Computes the helper value."))
+        assertTrue(section.text.contains("int helper()"))
+        assertTrue(section.text.contains("int value = 7;"))
+        assertFalse(section.text.contains("return value;"))
+    }
 }
