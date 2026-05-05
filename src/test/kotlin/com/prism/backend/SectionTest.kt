@@ -14,9 +14,9 @@ class SectionTest {
     }
 
     @Test
-    fun `primary constructor keeps explicit priority`() {
-        val section = Section(SectionKind.TARGET, priority = 7, text = "body", tokens = 1)
+    fun `priority follows section kind`() {
+        val section = Section(SectionKind.CALLERS, text = "body", tokens = 1)
 
-        assertEquals(7, section.priority)
+        assertEquals(SectionKind.CALLERS.priority, section.priority)
     }
 }

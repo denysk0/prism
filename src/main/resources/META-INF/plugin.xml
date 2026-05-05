@@ -2,6 +2,9 @@
   <id>com.prism</id>
   <name>Prism</name>
   <vendor>Prism</vendor>
+  <description>
+    Builds task-scoped context capsules from IntelliJ PSI and exposes them through the bundled MCP server.
+  </description>
 
   <depends>com.intellij.modules.platform</depends>
   <depends>com.intellij.java</depends>

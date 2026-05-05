@@ -11,11 +11,12 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 
 class CapsuleBuilderTest : LightJavaCodeInsightFixtureTestCase() {
-    fun testBuildReturnsTargetAndSkeletonForJavaMethod() {
+    fun testBuildReturnsTargetAndSkeletonForJavaMethod() = runBlocking {
         val source = """
             class Sample {
                 private int value = 7;

@@ -15,15 +15,18 @@ class JavaBackend(
             is PsiClass,
             -> Section(
                 SectionKind.TARGET,
-                100,
                 element.text,
                 estimator.estimate(element.text),
             )
 
             else -> null
-        }
+    }
 
     override fun extractOwningClassSkeleton(element: PsiElement): Section? {
+        if (element is PsiClass) {
+            return null
+        }
+
         val targetMethod = findTargetMethod(element)
         val owningClass = findOwningClass(element) ?: return null
         val text = buildString {

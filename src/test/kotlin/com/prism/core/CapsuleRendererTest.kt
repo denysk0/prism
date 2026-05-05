@@ -15,8 +15,8 @@ class CapsuleRendererTest {
     @Test
     fun `renders sections as markdown headings and fenced code`() {
         val sections = listOf(
-            Section(SectionKind.TARGET, priority = 100, text = "fun answer() = 42", tokens = 5),
-            Section(SectionKind.OWNING_SKELETON, priority = 80, text = "class Service", tokens = 3),
+            Section(SectionKind.TARGET, text = "fun answer() = 42", tokens = 5),
+            Section(SectionKind.OWNING_SKELETON, text = "class Service", tokens = 3),
         )
 
         val markdown = CapsuleRenderer.toMarkdown(sections)
@@ -41,7 +41,7 @@ class CapsuleRendererTest {
     @Test
     fun `uses longer markdown fence when section text contains backticks`() {
         val sections = listOf(
-            Section(SectionKind.TARGET, priority = 100, text = "val code = \"```\"", tokens = 6),
+            Section(SectionKind.TARGET, text = "val code = \"```\"", tokens = 6),
         )
 
         val markdown = CapsuleRenderer.toMarkdown(sections)
@@ -61,7 +61,7 @@ class CapsuleRendererTest {
     @Test
     fun `renders schema-compatible json`() {
         val sections = listOf(
-            Section(SectionKind.TARGET, priority = 100, text = "println(\"hello\")", tokens = 4),
+            Section(SectionKind.TARGET, text = "println(\"hello\")", tokens = 4),
         )
         val stats = CapsuleStats(tokens = 4, budget = 100, naiveTokens = 16, savedPct = 75.0)
         val omitted = listOf(OmittedSection(SectionKind.CALLERS, "timeout"))

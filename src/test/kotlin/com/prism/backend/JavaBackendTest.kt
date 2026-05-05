@@ -1,6 +1,7 @@
 package com.prism.backend
 
 import com.intellij.psi.PsiMethod
+import com.intellij.psi.PsiClass
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.testFramework.fixtures.LightJavaCodeInsightFixtureTestCase
 
@@ -57,5 +58,21 @@ class JavaBackendTest : LightJavaCodeInsightFixtureTestCase() {
         assertFalse(section.text.contains("return value + 1"))
         assertFalse(section.text.contains("return value + 2"))
         assertFalse(section.text.contains("int selected()"))
+    }
+
+    fun testExtractOwningClassSkeletonReturnsNullForClassTarget() {
+        val file = myFixture.configureByText(
+            "Sample.java",
+            """
+                class Sample {
+                    int answer() {
+                        return 42;
+                    }
+                }
+            """.trimIndent(),
+        )
+        val psiClass = PsiTreeUtil.findChildOfType(file, PsiClass::class.java)
+
+        assertNull(JavaBackend().extractOwningClassSkeleton(psiClass!!))
     }
 }

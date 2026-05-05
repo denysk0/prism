@@ -30,7 +30,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 
     intellijPlatform {
-        intellijIdeaCommunity(providers.gradleProperty("platformVersion"))
+        local(providers.gradleProperty("localIdeaPath"))
         bundledPlugin("com.intellij.java")
         bundledPlugin("com.intellij.mcpServer")
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
@@ -52,6 +52,12 @@ intellijPlatform {
 
         ideaVersion {
             sinceBuild = "252"
+        }
+    }
+
+    pluginVerification {
+        ides {
+            current()
         }
     }
 }
