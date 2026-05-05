@@ -112,4 +112,44 @@ class JavaBackendTest : LightJavaCodeInsightFixtureTestCase() {
         assertTrue(text.contains("@SuppressWarnings({"))
         assertTrue(text.contains("    \"a\","))
     }
+
+    fun testExtractCalleesReturnsResolvedDistinctMethods() {
+        val file = myFixture.configureByText(
+            "Sample.java",
+            """
+                class Sample {
+                    int selected() {
+                        int total = first();
+                        total += second();
+                        total += third();
+                        total += first();
+                        return total;
+                    }
+
+                    int first() {
+                        return 1;
+                    }
+
+                    int second() {
+                        return 2;
+                    }
+
+                    int third() {
+                        return 3;
+                    }
+                }
+            """.trimIndent(),
+        )
+        val method = PsiTreeUtil.findChildrenOfType(file, PsiMethod::class.java)
+            .single { it.name == "selected" }
+
+        val sections = JavaBackend().extractCallees(method)
+
+        assertEquals(3, sections.size)
+        assertTrue(sections.all { section -> section.kind == SectionKind.INTERNAL_CALLEES })
+        val text = sections.joinToString("\n") { section -> section.text }
+        assertTrue(text.contains("int first()"))
+        assertTrue(text.contains("int second()"))
+        assertTrue(text.contains("int third()"))
+    }
 }

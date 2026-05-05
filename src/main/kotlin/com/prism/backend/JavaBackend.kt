@@ -3,6 +3,9 @@ package com.prism.backend
 import com.intellij.psi.PsiClass
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiMethod
+import com.intellij.psi.PsiMethodCallExpression
+import com.intellij.psi.PsiSubstitutor
+import com.intellij.psi.util.PsiTreeUtil
 import com.prism.core.CharsBy4Estimator
 import com.prism.core.TokenEstimator
 
@@ -51,6 +54,30 @@ class JavaBackend(
             text,
             estimator.estimate(text),
         )
+    }
+
+    override fun extractCallees(element: PsiElement): List<Section> {
+        val targetMethod = findTargetMethod(element) ?: return emptyList()
+        val body = targetMethod.body ?: return emptyList()
+        val targetFile = targetMethod.containingFile?.virtualFile
+        val seen = linkedSetOf<String>()
+        val callees = mutableListOf<Section>()
+
+        PsiTreeUtil.findChildrenOfType(body, PsiMethodCallExpression::class.java)
+            .asSequence()
+            .mapNotNull { call -> call.resolveMethod() }
+            .filter { method -> seen.add(methodKey(method)) }
+            .take(MAX_CALLEES)
+            .forEach { method ->
+                val kind = if (method.containingFile?.virtualFile == targetFile) {
+                    SectionKind.INTERNAL_CALLEES
+                } else {
+                    SectionKind.EXTERNAL_CALLEES
+                }
+                callees += Section(kind, method.text, estimator.estimate(method.text))
+            }
+
+        return callees
     }
 
     private fun findTargetMethod(element: PsiElement): PsiMethod? =
@@ -104,6 +131,13 @@ class JavaBackend(
         return method.text.substring(0, signatureEnd).trimEnd() + " { /* body omitted */ }"
     }
 
+    private fun methodKey(method: PsiMethod): String {
+        val owner = method.containingClass?.qualifiedName ?: method.containingFile?.virtualFile?.path.orEmpty()
+        val signature = method.getSignature(PsiSubstitutor.EMPTY)
+        val parameters = signature.parameterTypes.joinToString(",") { type -> type.canonicalText }
+        return "$owner#${signature.name}($parameters)"
+    }
+
     private fun StringBuilder.appendMember(text: String) {
         text.trimIndent().lineSequence().forEach { line ->
             append("    ")
@@ -111,5 +145,9 @@ class JavaBackend(
             append("\n")
         }
         append("\n")
+    }
+
+    private companion object {
+        const val MAX_CALLEES = 20
     }
 }
