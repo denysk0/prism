@@ -5,6 +5,7 @@ import com.intellij.mcpserver.annotations.McpDescription
 import com.intellij.mcpserver.annotations.McpTool
 import com.intellij.mcpserver.project
 import com.prism.core.CapsuleBuilder
+import com.prism.core.JtokkitEstimator
 import kotlin.coroutines.coroutineContext
 
 class GetContextCapsuleToolset : McpToolset {
@@ -18,7 +19,7 @@ class GetContextCapsuleToolset : McpToolset {
         @McpDescription("Token budget for the capsule")
         budget: Int = 2000,
     ): String =
-        CapsuleBuilder().build(
+        CapsuleBuilder(estimator = JtokkitEstimator()).build(
             project = coroutineContext.project,
             filePath = filePath,
             line = line,

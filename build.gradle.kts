@@ -28,6 +28,7 @@ java {
 
 dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+    implementation("com.knuddels:jtokkit:1.1.0")
 
     intellijPlatform {
         local(providers.gradleProperty("localIdeaPath"))
