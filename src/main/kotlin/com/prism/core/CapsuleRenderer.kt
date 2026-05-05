@@ -13,6 +13,8 @@ data class CapsuleStats(
     val budget: Int,
     val naiveTokens: Int,
     val savedPct: Double,
+    val transitiveNaiveTokens: Int = naiveTokens,
+    val absoluteSavedTokens: Int = if (naiveTokens < 0) -1 else (naiveTokens - tokens).coerceAtLeast(0),
 )
 
 data class OmittedSection(
@@ -54,6 +56,8 @@ object CapsuleRenderer {
                     put("budget", stats.budget)
                     put("naiveTokens", stats.naiveTokens)
                     put("savedPct", stats.savedPct)
+                    put("transitiveNaiveTokens", stats.transitiveNaiveTokens)
+                    put("absoluteSavedTokens", stats.absoluteSavedTokens)
                 },
             )
         }

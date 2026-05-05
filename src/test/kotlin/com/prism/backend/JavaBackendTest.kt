@@ -75,4 +75,41 @@ class JavaBackendTest : LightJavaCodeInsightFixtureTestCase() {
 
         assertNull(JavaBackend().extractOwningClassSkeleton(psiClass!!))
     }
+
+    fun testExtractOwningClassSkeletonNormalizesMemberIndent() {
+        val file = myFixture.configureByText(
+            "Sample.java",
+            """
+                class Sample {
+                    int selected() {
+                        return 42;
+                    }
+
+                    /**
+                     * Helper docs.
+                     */
+                    @SuppressWarnings({
+                      "a",
+                      "b"
+                    })
+                    int helper() {
+                        return 7;
+                    }
+                }
+            """.trimIndent(),
+        )
+        val method = PsiTreeUtil.findChildrenOfType(file, PsiMethod::class.java)
+            .single { it.name == "selected" }
+
+        val section = JavaBackend().extractOwningClassSkeleton(method)
+
+        assertNotNull(section)
+        val text = section!!.text
+        assertFalse(
+            text,
+            text.lineSequence().any { line -> Regex("^ {8,}\\S").containsMatchIn(line) },
+        )
+        assertTrue(text.contains("@SuppressWarnings({"))
+        assertTrue(text.contains("    \"a\","))
+    }
 }

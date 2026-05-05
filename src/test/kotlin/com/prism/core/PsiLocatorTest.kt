@@ -35,7 +35,7 @@ class PsiLocatorTest : LightJavaCodeInsightFixtureTestCase() {
 
             val line = source.lineNumberContaining("int doubled")
             val element = readAction {
-                PsiLocator.locate(project, sourcePath.toString(), line)
+                PsiLocator.locate(project, sourcePath.toString(), line)?.element
             }
 
             assertInstanceOf(element, PsiMethod::class.java)
@@ -65,7 +65,7 @@ class PsiLocatorTest : LightJavaCodeInsightFixtureTestCase() {
 
             val line = source.lineNumberContaining("    return input")
             val element = readAction {
-                PsiLocator.locate(project, sourcePath.toString(), line)
+                PsiLocator.locate(project, sourcePath.toString(), line)?.element
             }
 
             assertInstanceOf(element, PsiMethod::class.java)

@@ -13,8 +13,13 @@ import com.intellij.psi.PsiWhiteSpace
 import com.intellij.psi.util.PsiTreeUtil
 import java.nio.file.Path
 
+data class LocateResult(
+    val element: PsiElement?,
+    val psiFile: PsiFile,
+)
+
 object PsiLocator {
-    fun locate(project: Project, filePath: String, line: Int): PsiElement? {
+    fun locate(project: Project, filePath: String, line: Int): LocateResult? {
         if (filePath.isBlank() || line < 1) {
             return null
         }
@@ -32,14 +37,15 @@ object PsiLocator {
 
         val zeroBasedLine = line - 1
         if (zeroBasedLine !in 0 until document.lineCount) {
-            return null
+            return LocateResult(element = null, psiFile = psiFile)
         }
 
         val element = findFirstNonWhitespaceElementOnLine(psiFile, document, zeroBasedLine)
-            ?: return null
+            ?: return LocateResult(element = null, psiFile = psiFile)
 
-        return PsiTreeUtil.getParentOfType(element, PsiMethod::class.java, false)
+        val target = PsiTreeUtil.getParentOfType(element, PsiMethod::class.java, false)
             ?: PsiTreeUtil.getParentOfType(element, PsiClass::class.java, false)
+        return LocateResult(element = target, psiFile = psiFile)
     }
 
     private fun findFirstNonWhitespaceElementOnLine(

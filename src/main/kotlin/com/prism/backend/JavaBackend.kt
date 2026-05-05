@@ -105,9 +105,9 @@ class JavaBackend(
     }
 
     private fun StringBuilder.appendMember(text: String) {
-        text.lineSequence().forEach { line ->
+        text.trimIndent().lineSequence().forEach { line ->
             append("    ")
-            append(line)
+            append(line.trimStart())
             append("\n")
         }
         append("\n")

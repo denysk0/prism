@@ -83,5 +83,7 @@ class CapsuleRendererTest {
         assertEquals(100, renderedStats.getValue("budget").jsonPrimitive.int)
         assertEquals(16, renderedStats.getValue("naiveTokens").jsonPrimitive.int)
         assertEquals(75.0, renderedStats.getValue("savedPct").jsonPrimitive.double)
+        assertEquals(16, renderedStats.getValue("transitiveNaiveTokens").jsonPrimitive.int)
+        assertEquals(12, renderedStats.getValue("absoluteSavedTokens").jsonPrimitive.int)
     }
 }
