@@ -5,6 +5,7 @@ import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.psi.PsiElement
 import com.intellij.testFramework.fixtures.LightJavaCodeInsightFixtureTestCase
+import com.prism.backend.BackendResult
 import com.prism.backend.LanguageBackend
 import com.prism.backend.Section
 import com.prism.backend.SectionKind
@@ -221,9 +222,9 @@ class CapsuleBuilderTest : LightJavaCodeInsightFixtureTestCase() {
 
         override fun extractOwningClassSkeleton(element: PsiElement): Section? = null
 
-        override fun extractCallees(element: PsiElement): List<Section> {
+        override fun extractCallees(element: PsiElement): BackendResult {
             Thread.sleep(200)
-            return listOf(Section(SectionKind.INTERNAL_CALLEES, "slow()", tokens = 1))
+            return BackendResult(listOf(Section(SectionKind.INTERNAL_CALLEES, "slow()", tokens = 1)))
         }
     }
 }

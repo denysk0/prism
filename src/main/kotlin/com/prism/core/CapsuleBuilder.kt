@@ -5,6 +5,7 @@ import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
+import com.prism.backend.BackendResult
 import com.prism.backend.JavaBackend
 import com.prism.backend.LanguageBackend
 import com.prism.backend.Section
@@ -22,6 +23,7 @@ class CapsuleBuilder(
     private val estimator: TokenEstimator = CharsBy4Estimator,
     private val renderer: CapsuleRenderer = CapsuleRenderer,
     private val operationTimeoutMillis: Long = DEFAULT_OPERATION_TIMEOUT_MILLIS,
+    private val overallTimeoutMillis: Long = DEFAULT_OVERALL_TIMEOUT_MILLIS,
     private val backendFactory: (PsiFile, TokenEstimator) -> LanguageBackend? = { psiFile, tokenEstimator ->
         when (psiFile.language.id) {
             "JAVA" -> JavaBackend(tokenEstimator)
@@ -77,7 +79,7 @@ class CapsuleBuilder(
             }
         }
 
-        val fitResult = CapsuleRanker.fit(buildData.sections, budget)
+        val fitResult = CapsuleRanker.fit(buildData.sections, budget, estimator)
         val sections = fitResult.included
         val tokens = sections.sumOf { it.tokens }
         val omitted = buildList {
@@ -111,63 +113,62 @@ class CapsuleBuilder(
         psiFile?.let { backendFactory(it, estimator) }
 
     private fun extractSections(backend: LanguageBackend, target: PsiElement): OperationResult {
-        val targetResult = runOperation(SectionKind.TARGET, "extractTarget") {
-            listOfNotNull(backend.extractTarget(target))
-        }
-        val skeletonResult = runOperation(SectionKind.OWNING_SKELETON, "extractOwningClassSkeleton") {
-            listOfNotNull(backend.extractOwningClassSkeleton(target))
-        }
-        val calleesResult = runOperation(SectionKind.INTERNAL_CALLEES, "extractCallees") {
-            backend.extractCallees(target)
-        }
-        val callersResult = runOperation(SectionKind.CALLERS, "extractCallers") {
-            backend.extractCallers(target)
-        }
-        val relevantTypesResult = runOperation(SectionKind.RELEVANT_TYPES, "extractRelevantTypes") {
-            backend.extractRelevantTypes(target)
-        }
-
-        return OperationResult(
-            sections = targetResult.sections +
-                skeletonResult.sections +
-                calleesResult.sections +
-                callersResult.sections +
-                relevantTypesResult.sections,
-            omitted = targetResult.omitted +
-                skeletonResult.omitted +
-                calleesResult.omitted +
-                callersResult.omitted +
-                relevantTypesResult.omitted,
+        val tasks = listOf(
+            OperationTask(SectionKind.TARGET, "extractTarget") {
+                BackendResult(listOfNotNull(backend.extractTarget(target)))
+            },
+            OperationTask(SectionKind.OWNING_SKELETON, "extractOwningClassSkeleton") {
+                BackendResult(listOfNotNull(backend.extractOwningClassSkeleton(target)))
+            },
+            OperationTask(SectionKind.INTERNAL_CALLEES, "extractCallees") {
+                backend.extractCallees(target)
+            },
+            OperationTask(SectionKind.CALLERS, "extractCallers") {
+                backend.extractCallers(target)
+            },
+            OperationTask(SectionKind.RELEVANT_TYPES, "extractRelevantTypes") {
+                backend.extractRelevantTypes(target)
+            },
         )
-    }
 
-    private fun runOperation(
-        omittedKind: SectionKind,
-        operationName: String,
-        operation: () -> List<Section>,
-    ): OperationResult {
-        val future = CompletableFuture.supplyAsync(
-            { ReadAction.compute<List<Section>, RuntimeException> { operation() } },
-            BACKEND_EXECUTOR,
-        )
-        return try {
-            OperationResult(
-                sections = future.orTimeout(operationTimeoutMillis, TimeUnit.MILLISECONDS).get(),
-                omitted = emptyList(),
+        val futures = tasks.map { task ->
+            task to CompletableFuture.supplyAsync(
+                { ReadAction.compute<BackendResult, RuntimeException> { task.invoke() } },
+                BACKEND_EXECUTOR,
             )
-        } catch (exception: Exception) {
-            future.cancel(true)
-            val reason = if (exception.isTimeout()) {
-                "$operationName: timeout"
-            } else {
-                "$operationName: ${exception.rootCauseName()}"
+        }
+
+        val deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(overallTimeoutMillis)
+        val perOpNanos = TimeUnit.MILLISECONDS.toNanos(operationTimeoutMillis)
+        val sections = mutableListOf<Section>()
+        val omitted = mutableListOf<OmittedSection>()
+
+        for ((task, future) in futures) {
+            val remaining = (deadlineNanos - System.nanoTime()).coerceAtLeast(0L)
+            val waitNanos = minOf(perOpNanos, remaining)
+            try {
+                val result = future.get(waitNanos, TimeUnit.NANOSECONDS)
+                sections += result.sections
+                omitted += result.omitted
+            } catch (exception: Exception) {
+                future.cancel(true)
+                val reason = if (exception.isTimeout()) {
+                    "${task.operationName}: timeout"
+                } else {
+                    "${task.operationName}: ${exception.rootCauseName()}"
+                }
+                omitted += OmittedSection(task.kind, reason)
             }
-            OperationResult(
-                sections = emptyList(),
-                omitted = listOf(OmittedSection(omittedKind, reason)),
-            )
         }
+
+        return OperationResult(sections = sections, omitted = omitted)
     }
+
+    private data class OperationTask(
+        val kind: SectionKind,
+        val operationName: String,
+        val invoke: () -> BackendResult,
+    )
 
     private fun resolveFilePath(project: Project, filePath: String): Path {
         val path = Path.of(filePath)
@@ -224,6 +225,7 @@ class CapsuleBuilder(
     private companion object {
         const val UNAVAILABLE_NAIVE_TOKENS = -1
         const val DEFAULT_OPERATION_TIMEOUT_MILLIS = 2_000L
+        const val DEFAULT_OVERALL_TIMEOUT_MILLIS = 5_000L
 
         val BACKEND_EXECUTOR = Executors.newCachedThreadPool(
             ThreadFactory { runnable ->

@@ -144,7 +144,8 @@ class JavaBackendTest : LightJavaCodeInsightFixtureTestCase() {
         val method = PsiTreeUtil.findChildrenOfType(file, PsiMethod::class.java)
             .single { it.name == "selected" }
 
-        val sections = JavaBackend().extractCallees(method)
+        val result = JavaBackend().extractCallees(method)
+        val sections = result.sections
 
         assertEquals(3, sections.size)
         assertTrue(sections.all { section -> section.kind == SectionKind.INTERNAL_CALLEES })
@@ -152,6 +153,7 @@ class JavaBackendTest : LightJavaCodeInsightFixtureTestCase() {
         assertTrue(text.contains("int first()"))
         assertTrue(text.contains("int second()"))
         assertTrue(text.contains("int third()"))
+        assertTrue(result.omitted.isEmpty())
     }
 
     fun testExtractCalleesUsesCompactContext() {
@@ -176,7 +178,7 @@ class JavaBackendTest : LightJavaCodeInsightFixtureTestCase() {
         val method = PsiTreeUtil.findChildrenOfType(file, PsiMethod::class.java)
             .single { it.name == "selected" }
 
-        val section = JavaBackend().extractCallees(method).single()
+        val section = JavaBackend().extractCallees(method).sections.single()
 
         assertEquals(SectionKind.INTERNAL_CALLEES, section.kind)
         assertTrue(section.text.contains("Computes the helper value."))
@@ -212,7 +214,8 @@ class JavaBackendTest : LightJavaCodeInsightFixtureTestCase() {
         val target = PsiTreeUtil.findChildrenOfType(file, PsiMethod::class.java)
             .single { it.name == "target" }
 
-        val sections = JavaBackend().extractCallers(target)
+        val result = JavaBackend().extractCallers(target)
+        val sections = result.sections
 
         assertEquals(3, sections.size)
         assertTrue(sections.all { section -> section.kind == SectionKind.CALLERS })
@@ -220,6 +223,7 @@ class JavaBackendTest : LightJavaCodeInsightFixtureTestCase() {
         assertTrue(text.contains("int first()"))
         assertTrue(text.contains("int second()"))
         assertTrue(text.contains("int duplicate()"))
+        assertTrue(result.omitted.isEmpty())
     }
 
     fun testExtractRelevantTypesReturnsProjectDtoSkeleton() {
@@ -262,7 +266,7 @@ class JavaBackendTest : LightJavaCodeInsightFixtureTestCase() {
         val method = PsiTreeUtil.findChildrenOfType(file, PsiMethod::class.java)
             .single { it.name == "checkout" }
 
-        val sections = JavaBackend().extractRelevantTypes(method)
+        val sections = JavaBackend().extractRelevantTypes(method).sections
 
         assertEquals(2, sections.size)
         assertTrue(sections.all { section -> section.kind == SectionKind.RELEVANT_TYPES })
@@ -294,7 +298,13 @@ class JavaBackendTest : LightJavaCodeInsightFixtureTestCase() {
             .single { it.name == "target" }
 
         DumbModeTestUtils.runInDumbModeSynchronously(project) {
-            assertTrue(JavaBackend().extractCallers(target).isEmpty())
+            val result = JavaBackend().extractCallers(target)
+            assertTrue(result.sections.isEmpty())
+            assertTrue(
+                result.omitted.any { entry ->
+                    entry.kind == SectionKind.CALLERS && entry.reason.startsWith("dumb mode")
+                },
+            )
         }
     }
 }

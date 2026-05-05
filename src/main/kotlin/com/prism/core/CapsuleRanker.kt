@@ -9,7 +9,11 @@ data class FitResult(
 )
 
 object CapsuleRanker {
-    fun fit(sections: List<Section>, budget: Int): FitResult {
+    fun fit(
+        sections: List<Section>,
+        budget: Int,
+        estimator: TokenEstimator = CharsBy4Estimator,
+    ): FitResult {
         if (budget <= 0) {
             return FitResult(
                 included = emptyList(),
@@ -17,7 +21,7 @@ object CapsuleRanker {
             )
         }
 
-        val degradedSections = degradeOwningSkeletonIfNeeded(sections, budget)
+        val degradedSections = degradeOwningSkeletonIfNeeded(sections, budget, estimator)
         var usedTokens = 0
         val included = mutableListOf<Section>()
         val omitted = mutableListOf<OmittedSection>()
@@ -34,7 +38,11 @@ object CapsuleRanker {
         return FitResult(included = included, omitted = omitted)
     }
 
-    private fun degradeOwningSkeletonIfNeeded(sections: List<Section>, budget: Int): List<Section> {
+    private fun degradeOwningSkeletonIfNeeded(
+        sections: List<Section>,
+        budget: Int,
+        estimator: TokenEstimator,
+    ): List<Section> {
         val target = sections.firstOrNull { section -> section.kind == SectionKind.TARGET }
             ?: return sections
         val skeleton = sections.firstOrNull { section -> section.kind == SectionKind.OWNING_SKELETON }
@@ -43,7 +51,7 @@ object CapsuleRanker {
             return sections
         }
 
-        val reducedSkeleton = skeleton.reducedOwningSkeleton()
+        val reducedSkeleton = skeleton.reducedOwningSkeleton(estimator)
         if (target.tokens + reducedSkeleton.tokens > budget) {
             return sections
         }
@@ -53,7 +61,7 @@ object CapsuleRanker {
         }
     }
 
-    private fun Section.reducedOwningSkeleton(): Section {
+    private fun Section.reducedOwningSkeleton(estimator: TokenEstimator): Section {
         val reducedLines = mutableListOf<String>()
         val lines = text.lines()
         val firstLine = lines.firstOrNull()
@@ -71,7 +79,7 @@ object CapsuleRanker {
         val reducedText = reducedLines.joinToString("\n")
         return copy(
             text = reducedText,
-            tokens = (reducedText.length / 4).coerceAtLeast(1),
+            tokens = estimator.estimate(reducedText).coerceAtLeast(1),
         )
     }
 }

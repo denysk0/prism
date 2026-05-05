@@ -14,6 +14,7 @@ import com.intellij.psi.PsiSubstitutor
 import com.intellij.psi.PsiType
 import com.intellij.psi.util.PsiTreeUtil
 import com.prism.core.CharsBy4Estimator
+import com.prism.core.OmittedSection
 import com.prism.core.TokenEstimator
 
 class JavaBackend(
@@ -48,62 +49,94 @@ class JavaBackend(
         )
     }
 
-    override fun extractCallees(element: PsiElement): List<Section> {
-        val targetMethod = findTargetMethod(element) ?: return emptyList()
-        val body = targetMethod.body ?: return emptyList()
+    override fun extractCallees(element: PsiElement): BackendResult {
+        val targetMethod = findTargetMethod(element) ?: return BackendResult(emptyList())
+        val body = targetMethod.body ?: return BackendResult(emptyList())
         val targetFile = targetMethod.containingFile?.virtualFile
         val seen = linkedSetOf<String>()
-        val callees = mutableListOf<Section>()
 
-        PsiTreeUtil.findChildrenOfType(body, PsiMethodCallExpression::class.java)
+        val resolved = PsiTreeUtil.findChildrenOfType(body, PsiMethodCallExpression::class.java)
             .asSequence()
             .mapNotNull { call -> call.resolveMethod() }
             .filter { method -> seen.add(methodKey(method)) }
-            .take(MAX_CALLEES)
-            .forEach { method ->
-                val kind = if (method.containingFile?.virtualFile == targetFile) {
-                    SectionKind.INTERNAL_CALLEES
-                } else {
-                    SectionKind.EXTERNAL_CALLEES
-                }
-                val text = calleeContext(method)
-                callees += Section(kind, text, estimator.estimate(text))
-            }
+            .toList()
 
-        return callees
+        val limited = resolved.take(MAX_CALLEES)
+        val callees = limited.map { method ->
+            val kind = if (method.containingFile?.virtualFile == targetFile) {
+                SectionKind.INTERNAL_CALLEES
+            } else {
+                SectionKind.EXTERNAL_CALLEES
+            }
+            val text = calleeContext(method)
+            Section(kind, text, estimator.estimate(text))
+        }
+
+        val omitted = if (resolved.size > MAX_CALLEES) {
+            listOf(
+                OmittedSection(
+                    SectionKind.INTERNAL_CALLEES,
+                    "cap reached: ${resolved.size - MAX_CALLEES} callees omitted",
+                ),
+            )
+        } else {
+            emptyList()
+        }
+
+        return BackendResult(callees, omitted)
     }
 
-    override fun extractCallers(element: PsiElement): List<Section> {
-        val targetMethod = findTargetMethod(element) ?: return emptyList()
+    override fun extractCallers(element: PsiElement): BackendResult {
+        val targetMethod = findTargetMethod(element) ?: return BackendResult(emptyList())
         val project = targetMethod.project
         if (DumbService.isDumb(project)) {
-            return emptyList()
+            return BackendResult(
+                sections = emptyList(),
+                omitted = listOf(
+                    OmittedSection(SectionKind.CALLERS, "dumb mode: callers unavailable until indexing completes"),
+                ),
+            )
         }
 
         val seen = linkedSetOf<String>()
-        return ReferencesSearch.search(targetMethod, GlobalSearchScope.projectScope(project))
+        val resolved = ReferencesSearch.search(targetMethod, GlobalSearchScope.projectScope(project))
             .asSequence()
             .mapNotNull { reference -> PsiTreeUtil.getParentOfType(reference.element, PsiMethod::class.java, false) }
             .filterNot { method -> method.isEquivalentTo(targetMethod) }
             .filter { method -> seen.add(methodKey(method)) }
-            .take(MAX_CALLERS)
-            .map { method ->
-                val text = calleeContext(method)
-                Section(SectionKind.CALLERS, text, estimator.estimate(text))
-            }
             .toList()
+
+        val limited = resolved.take(MAX_CALLERS)
+        val callers = limited.map { method ->
+            val text = calleeContext(method)
+            Section(SectionKind.CALLERS, text, estimator.estimate(text))
+        }
+
+        val omitted = if (resolved.size > MAX_CALLERS) {
+            listOf(
+                OmittedSection(
+                    SectionKind.CALLERS,
+                    "cap reached: ${resolved.size - MAX_CALLERS} callers omitted",
+                ),
+            )
+        } else {
+            emptyList()
+        }
+
+        return BackendResult(callers, omitted)
     }
 
-    override fun extractRelevantTypes(element: PsiElement): List<Section> {
-        val targetMethod = findTargetMethod(element) ?: return emptyList()
+    override fun extractRelevantTypes(element: PsiElement): BackendResult {
+        val targetMethod = findTargetMethod(element) ?: return BackendResult(emptyList())
         val projectFileIndex = ProjectFileIndex.getInstance(targetMethod.project)
         val seen = linkedSetOf<String>()
         val types = targetMethod.parameterList.parameters.map { parameter -> parameter.type } +
             listOfNotNull(targetMethod.returnType)
 
-        return types
-            .asSequence()
-            .mapNotNull(::resolveClassType)
+        val collected = mutableListOf<PsiClass>()
+        types.forEach { type -> collectClassTypes(type, collected) }
+
+        val sections = collected.asSequence()
             .filter { psiClass -> isProjectRelevantType(psiClass, projectFileIndex) }
             .filter { psiClass -> seen.add(classKey(psiClass)) }
             .map { psiClass ->
@@ -111,6 +144,8 @@ class JavaBackend(
                 Section(SectionKind.RELEVANT_TYPES, text, estimator.estimate(text))
             }
             .toList()
+
+        return BackendResult(sections)
     }
 
     private fun findTargetMethod(element: PsiElement): PsiMethod? =
@@ -227,12 +262,17 @@ class JavaBackend(
         return "$owner#${signature.name}($parameters)"
     }
 
-    private fun resolveClassType(type: PsiType): PsiClass? =
+    private fun collectClassTypes(type: PsiType?, into: MutableList<PsiClass>) {
         when (type) {
-            is PsiClassType -> type.resolve()
-            is PsiArrayType -> resolveClassType(type.componentType)
-            else -> null
+            null -> return
+            is PsiClassType -> {
+                type.resolve()?.let { into += it }
+                type.parameters.forEach { argument -> collectClassTypes(argument, into) }
+            }
+            is PsiArrayType -> collectClassTypes(type.componentType, into)
+            else -> Unit
         }
+    }
 
     private fun isProjectRelevantType(psiClass: PsiClass, projectFileIndex: ProjectFileIndex): Boolean {
         val qualifiedName = psiClass.qualifiedName
