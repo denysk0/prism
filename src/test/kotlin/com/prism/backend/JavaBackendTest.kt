@@ -220,4 +220,57 @@ class JavaBackendTest : LightJavaCodeInsightFixtureTestCase() {
         assertTrue(text.contains("int second()"))
         assertTrue(text.contains("int duplicate()"))
     }
+
+    fun testExtractRelevantTypesReturnsProjectDtoSkeleton() {
+        val file = myFixture.configureByText(
+            "Sample.java",
+            """
+                import java.util.List;
+
+                class Sample {
+                    Receipt checkout(Order order, String accountId, List<String> tags) {
+                        return new Receipt(order.id());
+                    }
+                }
+
+                class Order {
+                    private final String id;
+
+                    Order(String id) {
+                        this.id = id;
+                    }
+
+                    String id() {
+                        return id;
+                    }
+                }
+
+                class Receipt {
+                    private final String orderId;
+
+                    Receipt(String orderId) {
+                        this.orderId = orderId;
+                    }
+
+                    String orderId() {
+                        return orderId;
+                    }
+                }
+            """.trimIndent(),
+        )
+        val method = PsiTreeUtil.findChildrenOfType(file, PsiMethod::class.java)
+            .single { it.name == "checkout" }
+
+        val sections = JavaBackend().extractRelevantTypes(method)
+
+        assertEquals(2, sections.size)
+        assertTrue(sections.all { section -> section.kind == SectionKind.RELEVANT_TYPES })
+        val text = sections.joinToString("\n") { section -> section.text }
+        assertTrue(text.contains("class Order"))
+        assertTrue(text.contains("private final String id;"))
+        assertTrue(text.contains("String id() { /* body omitted */ }"))
+        assertTrue(text.contains("class Receipt"))
+        assertFalse(text.contains("class String"))
+        assertFalse(text.contains("interface List"))
+    }
 }
