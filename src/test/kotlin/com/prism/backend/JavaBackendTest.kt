@@ -3,6 +3,7 @@ package com.prism.backend
 import com.intellij.psi.PsiMethod
 import com.intellij.psi.PsiClass
 import com.intellij.psi.util.PsiTreeUtil
+import com.intellij.testFramework.DumbModeTestUtils
 import com.intellij.testFramework.fixtures.LightJavaCodeInsightFixtureTestCase
 
 class JavaBackendTest : LightJavaCodeInsightFixtureTestCase() {
@@ -272,5 +273,28 @@ class JavaBackendTest : LightJavaCodeInsightFixtureTestCase() {
         assertTrue(text.contains("class Receipt"))
         assertFalse(text.contains("class String"))
         assertFalse(text.contains("interface List"))
+    }
+
+    fun testExtractCallersIsSafeInDumbMode() {
+        val file = myFixture.configureByText(
+            "Sample.java",
+            """
+                class Sample {
+                    int caller() {
+                        return target();
+                    }
+
+                    int target() {
+                        return 42;
+                    }
+                }
+            """.trimIndent(),
+        )
+        val target = PsiTreeUtil.findChildrenOfType(file, PsiMethod::class.java)
+            .single { it.name == "target" }
+
+        DumbModeTestUtils.runInDumbModeSynchronously(project) {
+            assertTrue(JavaBackend().extractCallers(target).isEmpty())
+        }
     }
 }

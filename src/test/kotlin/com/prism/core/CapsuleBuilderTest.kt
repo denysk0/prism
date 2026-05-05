@@ -3,7 +3,10 @@ package com.prism.core
 import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.psi.PsiElement
 import com.intellij.testFramework.fixtures.LightJavaCodeInsightFixtureTestCase
+import com.prism.backend.LanguageBackend
+import com.prism.backend.Section
 import com.prism.backend.SectionKind
 import java.nio.file.Files
 import java.nio.file.Path
@@ -140,6 +143,38 @@ class CapsuleBuilderTest : LightJavaCodeInsightFixtureTestCase() {
         assertUnavailableNaiveBaseline(root)
     }
 
+    fun testBuildRecordsTimeoutForSlowBackendOperation() = runBlocking {
+        val source = """
+            class SlowSample {
+                int selected() {
+                    return 42;
+                }
+            }
+        """.trimIndent()
+        val filePath = createProjectFile("SlowSample.java", source)
+        val line = source.lines().indexOfFirst { "return 42" in it } + 1
+        val builder = CapsuleBuilder(
+            operationTimeoutMillis = 20,
+            backendFactory = { _, _ -> SlowCalleeBackend },
+        )
+
+        val root = Json.parseToJsonElement(
+            builder.build(project, filePath.toString(), line, budget = 2000),
+        ).jsonObject
+        val omitted = root.getValue("omitted").jsonArray
+        val sections = root.getValue("sections").jsonArray
+
+        assertTrue(sections.any { entry ->
+            entry.jsonObject.getValue("kind").jsonPrimitive.content == SectionKind.TARGET.name
+        })
+        assertTrue(
+            omitted.any { entry ->
+                entry.jsonObject.getValue("kind").jsonPrimitive.content == SectionKind.INTERNAL_CALLEES.name &&
+                    entry.jsonObject.getValue("reason").jsonPrimitive.content == "extractCallees: timeout"
+            },
+        )
+    }
+
     private suspend fun buildCapsule(filePath: String, line: Int, budget: Int = 2000) =
         Json.parseToJsonElement(
             CapsuleBuilder().build(project, filePath, line, budget = budget),
@@ -178,5 +213,17 @@ class CapsuleBuilderTest : LightJavaCodeInsightFixtureTestCase() {
         assertEquals(-1, stats.getValue("transitiveNaiveTokens").jsonPrimitive.int)
         assertEquals(-1, stats.getValue("absoluteSavedTokens").jsonPrimitive.int)
         assertTrue("naive baseline unavailable" in omittedReasons)
+    }
+
+    private object SlowCalleeBackend : LanguageBackend {
+        override fun extractTarget(element: PsiElement): Section =
+            Section(SectionKind.TARGET, element.text, tokens = 1)
+
+        override fun extractOwningClassSkeleton(element: PsiElement): Section? = null
+
+        override fun extractCallees(element: PsiElement): List<Section> {
+            Thread.sleep(200)
+            return listOf(Section(SectionKind.INTERNAL_CALLEES, "slow()", tokens = 1))
+        }
     }
 }
