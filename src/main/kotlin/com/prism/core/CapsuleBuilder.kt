@@ -77,11 +77,12 @@ class CapsuleBuilder(
             }
         }
 
-        val (sections, budgetOmitted) = fitBudget(buildData.sections, budget)
+        val fitResult = CapsuleRanker.fit(buildData.sections, budget)
+        val sections = fitResult.included
         val tokens = sections.sumOf { it.tokens }
         val omitted = buildList {
             addAll(buildData.omitted)
-            addAll(budgetOmitted)
+            addAll(fitResult.omitted)
             if (buildData.sections.isEmpty()) {
                 add(OmittedSection(SectionKind.TARGET, "target not found or unsupported file"))
             }
@@ -187,29 +188,6 @@ class CapsuleBuilder(
         estimator.estimate(psiFile.text)
             .takeIf { it > 0 }
             ?: UNAVAILABLE_NAIVE_TOKENS
-
-    private fun fitBudget(sections: List<Section>, budget: Int): Pair<List<Section>, List<OmittedSection>> {
-        if (budget <= 0) {
-            return emptyList<Section>() to sections.map { section ->
-                OmittedSection(section.kind, "budget exceeded")
-            }
-        }
-
-        var usedTokens = 0
-        val selected = mutableListOf<Section>()
-        val omitted = mutableListOf<OmittedSection>()
-        sections.sortedByDescending { it.priority }.forEach { section ->
-            val canFit = usedTokens + section.tokens <= budget
-            if (canFit || selected.isEmpty()) {
-                selected += section
-                usedTokens += section.tokens
-            } else {
-                omitted += OmittedSection(section.kind, "budget exceeded")
-            }
-        }
-
-        return selected to omitted
-    }
 
     private fun savedPct(tokens: Int, naiveTokens: Int): Double =
         if (naiveTokens == UNAVAILABLE_NAIVE_TOKENS) {
