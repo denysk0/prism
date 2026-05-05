@@ -1,5 +1,8 @@
 package com.prism.backend
 
+import com.intellij.openapi.project.DumbService
+import com.intellij.psi.search.GlobalSearchScope
+import com.intellij.psi.search.searches.ReferencesSearch
 import com.intellij.psi.PsiClass
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiMethod
@@ -79,6 +82,27 @@ class JavaBackend(
             }
 
         return callees
+    }
+
+    override fun extractCallers(element: PsiElement): List<Section> {
+        val targetMethod = findTargetMethod(element) ?: return emptyList()
+        val project = targetMethod.project
+        if (DumbService.isDumb(project)) {
+            return emptyList()
+        }
+
+        val seen = linkedSetOf<String>()
+        return ReferencesSearch.search(targetMethod, GlobalSearchScope.projectScope(project))
+            .asSequence()
+            .mapNotNull { reference -> PsiTreeUtil.getParentOfType(reference.element, PsiMethod::class.java, false) }
+            .filterNot { method -> method.isEquivalentTo(targetMethod) }
+            .filter { method -> seen.add(methodKey(method)) }
+            .take(MAX_CALLERS)
+            .map { method ->
+                val text = calleeContext(method)
+                Section(SectionKind.CALLERS, text, estimator.estimate(text))
+            }
+            .toList()
     }
 
     private fun findTargetMethod(element: PsiElement): PsiMethod? =
@@ -188,5 +212,6 @@ class JavaBackend(
 
     private companion object {
         const val MAX_CALLEES = 20
+        const val MAX_CALLERS = 10
     }
 }

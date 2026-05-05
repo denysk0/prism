@@ -183,4 +183,41 @@ class JavaBackendTest : LightJavaCodeInsightFixtureTestCase() {
         assertTrue(section.text.contains("int value = 7;"))
         assertFalse(section.text.contains("return value;"))
     }
+
+    fun testExtractCallersReturnsResolvedDistinctCallers() {
+        val file = myFixture.configureByText(
+            "Sample.java",
+            """
+                class Sample {
+                    int first() {
+                        return target();
+                    }
+
+                    int second() {
+                        return target();
+                    }
+
+                    int duplicate() {
+                        int value = target();
+                        return value + target();
+                    }
+
+                    int target() {
+                        return 42;
+                    }
+                }
+            """.trimIndent(),
+        )
+        val target = PsiTreeUtil.findChildrenOfType(file, PsiMethod::class.java)
+            .single { it.name == "target" }
+
+        val sections = JavaBackend().extractCallers(target)
+
+        assertEquals(3, sections.size)
+        assertTrue(sections.all { section -> section.kind == SectionKind.CALLERS })
+        val text = sections.joinToString("\n") { section -> section.text }
+        assertTrue(text.contains("int first()"))
+        assertTrue(text.contains("int second()"))
+        assertTrue(text.contains("int duplicate()"))
+    }
 }
