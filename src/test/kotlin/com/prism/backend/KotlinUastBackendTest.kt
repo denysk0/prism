@@ -127,6 +127,37 @@ class KotlinUastBackendTest : LightJavaCodeInsightFixtureTestCase() {
         assertTrue(result.omitted.isEmpty())
     }
 
+    fun testExtractRelevantTypesReturnsProjectClasses() {
+        val source = """
+            data class Receipt(
+                val id: String,
+                val amount: Int,
+            )
+
+            class Result(val ok: Boolean) {
+                fun describe(): String = if (ok) "ok" else "fail"
+            }
+
+            class Sample {
+                fun process(receipt: Receipt): Result {
+                    return Result(receipt.amount > 0)
+                }
+            }
+        """.trimIndent()
+        val file = myFixture.configureByText("Sample.kt", source)
+        val element = file.findElementAt(source.indexOf("return Result"))!!
+
+        val result = KotlinUastBackend().extractRelevantTypes(element)
+        val text = result.sections.joinToString("\n") { section -> section.text }
+
+        assertTrue(result.sections.all { section -> section.kind == SectionKind.RELEVANT_TYPES })
+        assertTrue(text.contains("Receipt"))
+        assertTrue(text.contains("Result"))
+        assertTrue(text.contains("val id: String"))
+        assertTrue(text.contains("fun describe()"))
+        assertTrue(result.omitted.isEmpty())
+    }
+
     fun testExtractCalleesReturnsResolvedKotlinCallees() {
         val source = """
             class Sample {

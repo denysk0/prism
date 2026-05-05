@@ -1,10 +1,13 @@
 <idea-plugin>
   <id>com.prism</id>
   <name>Prism</name>
-  <vendor>Prism</vendor>
-  <description>
-    Builds task-scoped context capsules from IntelliJ PSI and exposes them through the bundled MCP server.
-  </description>
+  <vendor email="" url="https://github.com/denysk0/prism">denysk0</vendor>
+  <idea-version since-build="252" until-build="261.*"/>
+  <!-- TODO: add src/main/resources/META-INF/pluginIcon.svg before publish -->
+  <description><![CDATA[
+    Token-budgeted context capsules for coding agents. Exposes one MCP tool that compiles a task-scoped slice of Java/Kotlin code (target method, owning class skeleton, callees, callers, relevant types) using IntelliJ PSI/UAST. Designed for Claude Code, Codex, and other MCP-aware agents.
+  ]]></description>
+  <change-notes><![CDATA[<ul><li>Initial release: Java + Kotlin context capsules via MCP.</li></ul>]]></change-notes>
 
   <depends>com.intellij.modules.platform</depends>
   <depends>com.intellij.java</depends>

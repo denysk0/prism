@@ -6,6 +6,7 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
+import com.intellij.util.concurrency.AppExecutorUtil
 import com.prism.backend.BackendResult
 import com.prism.backend.JavaBackend
 import com.prism.backend.KotlinUastBackend
@@ -13,14 +14,13 @@ import com.prism.backend.LanguageBackend
 import com.prism.backend.Section
 import com.prism.backend.SectionKind
 import java.nio.file.Path
-import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CancellationException
 import java.util.concurrent.ExecutionException
-import java.util.concurrent.Executors
-import java.util.concurrent.ThreadFactory
+import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import kotlinx.coroutines.runBlocking
+import org.jetbrains.concurrency.CancellablePromise
 
 class CapsuleBuilder @JvmOverloads constructor(
     private val estimator: TokenEstimator = CharsBy4Estimator,
@@ -87,7 +87,7 @@ class CapsuleBuilder @JvmOverloads constructor(
                     metadata = locatedData.metadata,
                 )
             } else {
-                val extraction = extractSections(locatedData.backend, locatedData.target)
+                val extraction = extractSections(project, locatedData.backend, locatedData.target)
                 val transitiveNaiveTokens = readAction {
                     estimateTransitiveNaiveTokens(locatedData.psiFile, extraction.sections, locatedData.naiveTokens)
                 }
@@ -151,7 +151,7 @@ class CapsuleBuilder @JvmOverloads constructor(
     private fun backendFor(psiFile: PsiFile?): LanguageBackend? =
         psiFile?.let { backendFactory(it, estimator) }
 
-    private fun extractSections(backend: LanguageBackend, target: PsiElement): OperationResult {
+    private fun extractSections(project: Project, backend: LanguageBackend, target: PsiElement): OperationResult {
         val tasks = listOf(
             OperationTask(SectionKind.TARGET, "extractTarget") {
                 BackendResult(listOfNotNull(backend.extractTarget(target)))
@@ -170,11 +170,11 @@ class CapsuleBuilder @JvmOverloads constructor(
             },
         )
 
-        val futures = tasks.map { task ->
-            task to CompletableFuture.supplyAsync(
-                { ReadAction.compute<BackendResult, RuntimeException> { task.invoke() } },
-                BACKEND_EXECUTOR,
-            )
+        val promises: List<Pair<OperationTask, CancellablePromise<BackendResult>>> = tasks.map { task ->
+            val promise = ReadAction.nonBlocking<BackendResult> { task.invoke() }
+                .expireWith(project)
+                .submit(BACKEND_EXECUTOR)
+            task to promise
         }
 
         val deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(overallTimeoutMillis)
@@ -182,15 +182,22 @@ class CapsuleBuilder @JvmOverloads constructor(
         val sections = mutableListOf<Section>()
         val omitted = mutableListOf<OmittedSection>()
 
-        for ((task, future) in futures) {
+        for ((task, promise) in promises) {
             val remaining = (deadlineNanos - System.nanoTime()).coerceAtLeast(0L)
             val waitNanos = minOf(perOpNanos, remaining)
             try {
-                val result = future.get(waitNanos, TimeUnit.NANOSECONDS)
-                sections += result.sections
-                omitted += result.omitted
+                val result = promise.blockingGet(waitNanos.coerceAtLeast(0L).let {
+                    TimeUnit.NANOSECONDS.toMillis(it).toInt().coerceAtLeast(0)
+                })
+                if (result == null) {
+                    promise.cancel()
+                    omitted += OmittedSection(task.kind, "${task.operationName}: timeout")
+                } else {
+                    sections += result.sections
+                    omitted += result.omitted
+                }
             } catch (exception: Exception) {
-                future.cancel(true)
+                promise.cancel()
                 val reason = if (exception.isTimeout()) {
                     "${task.operationName}: timeout"
                 } else {
@@ -353,13 +360,8 @@ class CapsuleBuilder @JvmOverloads constructor(
             CapsuleBuilder(estimator = JtokkitEstimator())
 
         private val LOG = Logger.getInstance(CapsuleBuilder::class.java)
-        private val BACKEND_EXECUTOR = Executors.newCachedThreadPool(
-            ThreadFactory { runnable ->
-                Thread(runnable, "Prism Capsule Backend").apply {
-                    isDaemon = true
-                }
-            },
-        )
+        private val BACKEND_EXECUTOR: Executor =
+            AppExecutorUtil.createBoundedApplicationPoolExecutor("Prism-Backend", 4)
     }
 }
 

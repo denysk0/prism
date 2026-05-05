@@ -12,6 +12,15 @@ data class CapsulePublishedEvent(
     val requestContext: CapsuleRequestContext? = null,
 )
 
+/**
+ * Re-run context attached to a published capsule event.
+ *
+ * NOTE: [project] holds a strong reference to the originating [Project]. Any long-lived holder of
+ * a [CapsuleRequestContext] (or of an enclosing [CapsulePublishedEvent]) must release it on
+ * project dispose to avoid leaking the project across project close. The project-scoped
+ * [CapsulePublicationState] handles this via its [com.intellij.openapi.Disposable] hook; UI
+ * holders are bound to the tool window disposable and are released by the platform.
+ */
 data class CapsuleRequestContext(
     val project: Project,
     val filePath: String,

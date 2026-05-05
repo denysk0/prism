@@ -1,10 +1,15 @@
 package com.prism.backend
 
 import com.intellij.openapi.project.DumbService
-import com.intellij.psi.SmartPointerManager
-import com.intellij.psi.PsiMethod
+import com.intellij.openapi.roots.ProjectFileIndex
+import com.intellij.psi.PsiArrayType
+import com.intellij.psi.PsiClass
+import com.intellij.psi.PsiClassType
 import com.intellij.psi.PsiElement
+import com.intellij.psi.PsiMethod
 import com.intellij.psi.PsiModifier
+import com.intellij.psi.PsiType
+import com.intellij.psi.SmartPointerManager
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.search.searches.ReferencesSearch
 import com.prism.core.CapsuleNavigationTarget
@@ -143,6 +148,139 @@ class KotlinUastBackend(
         }
 
         return BackendResult(sections, omitted)
+    }
+
+    override fun extractRelevantTypes(element: PsiElement): BackendResult {
+        val targetMethod = findTargetMethod(element) ?: return BackendResult(emptyList())
+        val javaPsi = targetMethod.javaPsi
+        val projectFileIndex = ProjectFileIndex.getInstance(javaPsi.project)
+        val seen = linkedSetOf<String>()
+
+        val types = targetMethod.uastParameters.map { parameter -> parameter.type } +
+            listOfNotNull(targetMethod.returnType)
+
+        val collected = mutableListOf<PsiClass>()
+        types.forEach { type -> collectClassTypes(type, collected) }
+
+        val filtered = collected.asSequence()
+            .filter { psiClass -> isProjectRelevantType(psiClass, projectFileIndex) }
+            .filter { psiClass -> seen.add(classKey(psiClass)) }
+            .toList()
+
+        val limited = filtered.take(MAX_RELEVANT_TYPES)
+        val sections = limited.map { psiClass ->
+            val text = relevantTypeSkeleton(psiClass)
+            Section(
+                SectionKind.RELEVANT_TYPES,
+                text,
+                estimator.estimate(text),
+                navigation = navigationTarget(psiClass.navigationElement, psiClass.qualifiedName ?: psiClass.name ?: "class"),
+            )
+        }
+
+        val omitted = if (filtered.size > MAX_RELEVANT_TYPES) {
+            listOf(
+                OmittedSection(
+                    SectionKind.RELEVANT_TYPES,
+                    "cap reached: ${filtered.size - MAX_RELEVANT_TYPES} omitted",
+                ),
+            )
+        } else {
+            emptyList()
+        }
+
+        return BackendResult(sections, omitted)
+    }
+
+    private fun collectClassTypes(type: PsiType?, into: MutableList<PsiClass>) {
+        when (type) {
+            null -> return
+            is PsiClassType -> {
+                type.resolve()?.let { into += it }
+                type.parameters.forEach { argument -> collectClassTypes(argument, into) }
+            }
+            is PsiArrayType -> collectClassTypes(type.componentType, into)
+            else -> Unit
+        }
+    }
+
+    private fun isProjectRelevantType(psiClass: PsiClass, projectFileIndex: ProjectFileIndex): Boolean {
+        val qualifiedName = psiClass.qualifiedName
+        if (qualifiedName != null && (
+                qualifiedName.startsWith("java.") ||
+                    qualifiedName.startsWith("javax.") ||
+                    qualifiedName.startsWith("kotlin.") ||
+                    qualifiedName.startsWith("kotlinx.")
+                )
+        ) {
+            return false
+        }
+
+        val virtualFile = psiClass.containingFile?.virtualFile ?: return true
+        return !projectFileIndex.isInLibrarySource(virtualFile)
+    }
+
+    private fun classKey(psiClass: PsiClass): String =
+        psiClass.qualifiedName ?: (psiClass.containingFile?.virtualFile?.path.orEmpty() + "#" + psiClass.name)
+
+    private fun relevantTypeSkeleton(psiClass: PsiClass): String {
+        val uClass = psiClass.toUElement(UClass::class.java)
+        if (uClass != null) {
+            val source = (uClass as UElement).sourcePsi
+            if (source != null) {
+                return buildString {
+                    append(classSignature(uClass))
+                    append(" {\n")
+
+                    val seenMembers = linkedSetOf<String>()
+                    uClass.fields
+                        .asSequence()
+                        .mapNotNull { field -> (field as UElement).sourcePsi?.text }
+                        .filter { text -> seenMembers.add(text) }
+                        .forEach { text -> appendMember(text) }
+
+                    uClass.methods
+                        .asSequence()
+                        .mapNotNull { method -> methodSkeleton(method) }
+                        .filter { text -> seenMembers.add(text) }
+                        .forEach { text -> appendMember(text) }
+
+                    append("}")
+                }
+            }
+        }
+
+        return javaClassSkeleton(psiClass)
+    }
+
+    private fun javaClassSkeleton(psiClass: PsiClass): String {
+        val text = psiClass.text ?: return psiClass.qualifiedName ?: psiClass.name.orEmpty()
+        val bodyStart = psiClass.lBrace
+            ?.textRange
+            ?.startOffset
+            ?.minus(psiClass.textRange.startOffset)
+            ?: -1
+        val signature = if (bodyStart >= 0) text.substring(0, bodyStart).trimEnd() else text.trimEnd()
+
+        return buildString {
+            append(signature)
+            append(" {\n")
+
+            psiClass.fields.forEach { field -> appendMember(field.text) }
+
+            psiClass.methods.forEach { method ->
+                val body = method.body
+                val signatureText = if (body != null) {
+                    val end = body.textRange.startOffset - method.textRange.startOffset
+                    method.text.substring(0, end).trimEnd() + " { /* body omitted */ }"
+                } else {
+                    method.text.trimEnd()
+                }
+                appendMember(signatureText)
+            }
+
+            append("}")
+        }
     }
 
     private fun findTargetSource(element: PsiElement): String? {
@@ -372,5 +510,6 @@ class KotlinUastBackend(
     private companion object {
         const val MAX_CALLEES = 20
         const val MAX_CALLERS = 10
+        const val MAX_RELEVANT_TYPES = 10
     }
 }

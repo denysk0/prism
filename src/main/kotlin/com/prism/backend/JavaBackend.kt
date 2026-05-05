@@ -344,7 +344,7 @@ class JavaBackend(
     }
 
     private fun classKey(psiClass: PsiClass): String =
-        psiClass.qualifiedName ?: psiClass.containingFile?.virtualFile?.path.orEmpty() + "#" + psiClass.name
+        psiClass.qualifiedName ?: (psiClass.containingFile?.virtualFile?.path.orEmpty() + "#" + psiClass.name)
 
     private fun navigationTarget(element: PsiElement, label: String): CapsuleNavigationTarget =
         CapsuleNavigationTarget(

@@ -65,7 +65,7 @@ object CapsuleRenderer {
                     put("tokens", stats.tokens)
                     put("budget", stats.budget)
                     put("naiveTokens", stats.naiveTokens)
-                    put("savedPct", stats.savedPct)
+                    put("savedPct", sanitizeDouble(stats.savedPct))
                     put("transitiveNaiveTokens", stats.transitiveNaiveTokens)
                     put("absoluteSavedTokens", stats.absoluteSavedTokens)
                 },
@@ -86,6 +86,9 @@ object CapsuleRenderer {
         put("kind", kind.name)
         put("reason", reason)
     }
+
+    private fun sanitizeDouble(value: Double): Double =
+        if (value.isNaN() || value.isInfinite()) -1.0 else value
 
     private fun codeFenceFor(text: String): String {
         val longestBacktickRun = Regex("`+").findAll(text)

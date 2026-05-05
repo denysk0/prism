@@ -53,6 +53,18 @@ class CapsuleRankerTest {
     }
 
     @Test
+    fun `fit keeps oversized target when budget is tiny and omits lower priority sections`() {
+        val target = section(SectionKind.TARGET, tokens = 50)
+        val callers = section(SectionKind.CALLERS, tokens = 5)
+
+        val result = CapsuleRanker.fit(listOf(callers, target), budget = 1)
+
+        assertEquals(listOf(target), result.included)
+        assertEquals(listOf(OmittedSection(SectionKind.CALLERS, "budget exceeded")), result.omitted)
+        assertTrue(result.omitted.all { it.reason.contains("budget") })
+    }
+
+    @Test
     fun `fit degrades owning skeleton before omitting it`() {
         val target = section(SectionKind.TARGET, text = "target", tokens = 20)
         val skeleton = section(
