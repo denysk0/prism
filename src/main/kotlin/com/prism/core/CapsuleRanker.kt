@@ -51,7 +51,7 @@ object CapsuleRanker {
             return sections
         }
 
-        val reducedSkeleton = skeleton.reducedOwningSkeleton(estimator)
+        val reducedSkeleton = skeleton.reduced ?: skeleton.reducedOwningSkeleton(estimator)
         if (target.tokens + reducedSkeleton.tokens > budget) {
             return sections
         }

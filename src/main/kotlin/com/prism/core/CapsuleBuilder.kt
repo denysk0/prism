@@ -2,6 +2,7 @@ package com.prism.core
 
 import com.intellij.openapi.application.readAction
 import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
@@ -19,8 +20,9 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
+import kotlinx.coroutines.runBlocking
 
-class CapsuleBuilder(
+class CapsuleBuilder @JvmOverloads constructor(
     private val estimator: TokenEstimator = CharsBy4Estimator,
     private val renderer: CapsuleRenderer = CapsuleRenderer,
     private val operationTimeoutMillis: Long = DEFAULT_OPERATION_TIMEOUT_MILLIS,
@@ -30,7 +32,13 @@ class CapsuleBuilder(
     suspend fun build(project: Project, filePath: String, line: Int, budget: Int = 2000): String {
         val resolvedPath = resolveFilePath(project, filePath)
         val buildData = if (!isInsideProject(project, resolvedPath)) {
-            CapsuleBuildData(sections = emptyList(), omitted = emptyList(), naiveTokens = UNAVAILABLE_NAIVE_TOKENS)
+            CapsuleBuildData(
+                sections = emptyList(),
+                omitted = emptyList(),
+                naiveTokens = UNAVAILABLE_NAIVE_TOKENS,
+                transitiveNaiveTokens = UNAVAILABLE_NAIVE_TOKENS,
+                metadata = null,
+            )
         } else {
             val locatedData = readAction {
                 val located = PsiLocator.locate(project, resolvedPath.toString(), line)
@@ -39,6 +47,7 @@ class CapsuleBuilder(
                         backend = null,
                         psiFile = null,
                         naiveTokens = UNAVAILABLE_NAIVE_TOKENS,
+                        metadata = null,
                     )
                 val naiveTokens = estimateNaiveTokens(located.psiFile)
                 val target = located.element
@@ -47,6 +56,7 @@ class CapsuleBuilder(
                         backend = null,
                         psiFile = located.psiFile,
                         naiveTokens = naiveTokens,
+                        metadata = null,
                     )
                 val backend = backendFor(located.psiFile)
                     ?: return@readAction LocatedBuildData(
@@ -54,6 +64,7 @@ class CapsuleBuilder(
                         backend = null,
                         psiFile = located.psiFile,
                         naiveTokens = naiveTokens,
+                        metadata = null,
                     )
 
                 LocatedBuildData(
@@ -61,16 +72,31 @@ class CapsuleBuilder(
                     backend = backend,
                     psiFile = located.psiFile,
                     naiveTokens = naiveTokens,
+                    metadata = CapsuleMetadata(
+                        backend = backend.backendId,
+                        skeletonAccuracy = backend.skeletonAccuracy,
+                    ),
                 )
             }
             if (locatedData.target == null || locatedData.backend == null) {
-                CapsuleBuildData(sections = emptyList(), omitted = emptyList(), naiveTokens = locatedData.naiveTokens)
+                CapsuleBuildData(
+                    sections = emptyList(),
+                    omitted = emptyList(),
+                    naiveTokens = locatedData.naiveTokens,
+                    transitiveNaiveTokens = locatedData.naiveTokens,
+                    metadata = locatedData.metadata,
+                )
             } else {
                 val extraction = extractSections(locatedData.backend, locatedData.target)
+                val transitiveNaiveTokens = readAction {
+                    estimateTransitiveNaiveTokens(locatedData.psiFile, extraction.sections, locatedData.naiveTokens)
+                }
                 CapsuleBuildData(
                     sections = extraction.sections,
                     omitted = extraction.omitted,
                     naiveTokens = locatedData.naiveTokens,
+                    transitiveNaiveTokens = transitiveNaiveTokens,
+                    metadata = locatedData.metadata,
                 )
             }
         }
@@ -96,14 +122,31 @@ class CapsuleBuilder(
                 budget = budget,
                 naiveTokens = buildData.naiveTokens,
                 savedPct = savedPct(tokens, buildData.naiveTokens),
-                transitiveNaiveTokens = buildData.naiveTokens,
+                transitiveNaiveTokens = buildData.transitiveNaiveTokens,
                 absoluteSavedTokens = absoluteSavedTokens(tokens, buildData.naiveTokens),
             ),
             omitted = omitted,
+            metadata = buildData.metadata,
         )
-        project.messageBus.syncPublisher(CapsulePublishedTopic.TOPIC).capsulePublished(capsule)
+        val event = CapsulePublishedEvent(
+            capsuleJson = capsule,
+            tree = buildTree(sections),
+            requestContext = CapsuleRequestContext(
+                project = project,
+                filePath = filePath,
+                line = line,
+                budget = budget,
+            ),
+        )
+        CapsulePublicationState.getInstance(project).publish(event)
+        project.messageBus.syncPublisher(CapsulePublishedTopic.TOPIC).capsulePublished(event)
         return capsule
     }
+
+    fun buildBlocking(project: Project, filePath: String, line: Int, budget: Int = 2000): String =
+        runBlocking {
+            build(project, filePath, line, budget)
+        }
 
     private fun backendFor(psiFile: PsiFile?): LanguageBackend? =
         psiFile?.let { backendFactory(it, estimator) }
@@ -116,7 +159,7 @@ class CapsuleBuilder(
             OperationTask(SectionKind.OWNING_SKELETON, "extractOwningClassSkeleton") {
                 BackendResult(listOfNotNull(backend.extractOwningClassSkeleton(target)))
             },
-            OperationTask(SectionKind.INTERNAL_CALLEES, "extractCallees") {
+            OperationTask(SectionKind.CALLEES_PARTIAL, "extractCallees") {
                 backend.extractCallees(target)
             },
             OperationTask(SectionKind.CALLERS, "extractCallers") {
@@ -151,6 +194,7 @@ class CapsuleBuilder(
                 val reason = if (exception.isTimeout()) {
                     "${task.operationName}: timeout"
                 } else {
+                    LOG.warn("Capsule backend operation ${task.operationName} failed", exception)
                     "${task.operationName}: ${exception.rootCauseName()}"
                 }
                 omitted += OmittedSection(task.kind, reason)
@@ -186,6 +230,36 @@ class CapsuleBuilder(
             .takeIf { it > 0 }
             ?: UNAVAILABLE_NAIVE_TOKENS
 
+    private fun estimateTransitiveNaiveTokens(
+        psiFile: PsiFile?,
+        sections: List<Section>,
+        fallbackNaiveTokens: Int,
+    ): Int {
+        if (fallbackNaiveTokens == UNAVAILABLE_NAIVE_TOKENS || psiFile == null) {
+            return UNAVAILABLE_NAIVE_TOKENS
+        }
+
+        val files = linkedMapOf<String, PsiFile>()
+        addPsiFile(files, psiFile)
+        sections.asSequence()
+            .filter { section ->
+                section.kind == SectionKind.INTERNAL_CALLEES ||
+                    section.kind == SectionKind.EXTERNAL_CALLEES ||
+                    section.kind == SectionKind.RELEVANT_TYPES
+            }
+            .mapNotNull { section -> section.navigation?.pointer?.element?.containingFile }
+            .forEach { file -> addPsiFile(files, file) }
+
+        return files.values.sumOf { file -> estimator.estimate(file.text).coerceAtLeast(0) }
+            .takeIf { tokens -> tokens > 0 }
+            ?: fallbackNaiveTokens
+    }
+
+    private fun addPsiFile(files: MutableMap<String, PsiFile>, psiFile: PsiFile) {
+        val key = psiFile.virtualFile?.path ?: psiFile.name
+        files.putIfAbsent(key, psiFile)
+    }
+
     private fun savedPct(tokens: Int, naiveTokens: Int): Double =
         if (naiveTokens == UNAVAILABLE_NAIVE_TOKENS) {
             -1.0
@@ -200,10 +274,53 @@ class CapsuleBuilder(
             (naiveTokens - tokens).coerceAtLeast(0)
         }
 
+    private fun buildTree(sections: List<Section>): CapsuleTree? {
+        val target = sections.firstOrNull { section -> section.kind == SectionKind.TARGET }?.navigation ?: return null
+        val groups = listOf(
+            SectionKind.INTERNAL_CALLEES,
+            SectionKind.EXTERNAL_CALLEES,
+            SectionKind.CALLERS,
+            SectionKind.RELEVANT_TYPES,
+        ).mapNotNull { kind ->
+            val children = sections
+                .filter { section -> section.kind == kind }
+                .mapNotNull { section -> section.navigation }
+                .map { navigation ->
+                    CapsuleTreeNode(
+                        label = navigation.label,
+                        pointer = navigation.pointer,
+                        kind = kind,
+                    )
+                }
+
+            if (children.isEmpty()) {
+                null
+            } else {
+                CapsuleTreeNode(
+                    label = kind.name,
+                    pointer = null,
+                    kind = kind,
+                    children = children,
+                )
+            }
+        }
+
+        return CapsuleTree(
+            CapsuleTreeNode(
+                label = target.label,
+                pointer = target.pointer,
+                kind = SectionKind.TARGET,
+                children = groups,
+            ),
+        )
+    }
+
     private data class CapsuleBuildData(
         val sections: List<Section>,
         val omitted: List<OmittedSection>,
         val naiveTokens: Int,
+        val transitiveNaiveTokens: Int,
+        val metadata: CapsuleMetadata?,
     )
 
     private data class LocatedBuildData(
@@ -211,6 +328,7 @@ class CapsuleBuilder(
         val backend: LanguageBackend?,
         val psiFile: PsiFile?,
         val naiveTokens: Int,
+        val metadata: CapsuleMetadata?,
     )
 
     private data class OperationResult(
@@ -230,6 +348,11 @@ class CapsuleBuilder(
         internal const val DEFAULT_OPERATION_TIMEOUT_MILLIS = 2_000L
         internal const val DEFAULT_OVERALL_TIMEOUT_MILLIS = 5_000L
 
+        @JvmStatic
+        fun productionEstimatorBuilder(): CapsuleBuilder =
+            CapsuleBuilder(estimator = JtokkitEstimator())
+
+        private val LOG = Logger.getInstance(CapsuleBuilder::class.java)
         private val BACKEND_EXECUTOR = Executors.newCachedThreadPool(
             ThreadFactory { runnable ->
                 Thread(runnable, "Prism Capsule Backend").apply {

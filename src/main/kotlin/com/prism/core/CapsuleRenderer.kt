@@ -22,6 +22,11 @@ data class OmittedSection(
     val reason: String,
 )
 
+data class CapsuleMetadata(
+    val backend: String,
+    val skeletonAccuracy: String,
+)
+
 object CapsuleRenderer {
     private val json = Json {
         prettyPrint = false
@@ -45,10 +50,15 @@ object CapsuleRenderer {
         sections: List<Section>,
         stats: CapsuleStats,
         omitted: List<OmittedSection> = emptyList(),
+        metadata: CapsuleMetadata? = null,
     ): String {
         val capsule = buildJsonObject {
             put("sections", JsonArray(sections.map { it.toJson() }))
             put("omitted", JsonArray(omitted.map { it.toJson() }))
+            if (metadata != null) {
+                put("backend", metadata.backend)
+                put("skeletonAccuracy", metadata.skeletonAccuracy)
+            }
             put(
                 "stats",
                 buildJsonObject {

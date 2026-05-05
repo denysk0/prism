@@ -45,6 +45,7 @@ object PsiLocator {
 
         val target = PsiTreeUtil.getParentOfType(element, PsiMethod::class.java, false)
             ?: PsiTreeUtil.getParentOfType(element, PsiClass::class.java, false)
+            ?: element
         return LocateResult(element = target, psiFile = psiFile)
     }
 

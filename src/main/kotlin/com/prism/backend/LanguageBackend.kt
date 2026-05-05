@@ -9,6 +9,12 @@ data class BackendResult(
 )
 
 interface LanguageBackend {
+    val backendId: String
+        get() = "unknown"
+
+    val skeletonAccuracy: String
+        get() = "full"
+
     fun extractTarget(element: PsiElement): Section?
 
     fun extractOwningClassSkeleton(element: PsiElement): Section?

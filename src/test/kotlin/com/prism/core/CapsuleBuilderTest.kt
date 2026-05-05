@@ -4,6 +4,8 @@ import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.psi.PsiElement
+import com.intellij.psi.SmartPointerManager
+import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.testFramework.fixtures.LightJavaCodeInsightFixtureTestCase
 import com.prism.backend.BackendResult
 import com.prism.backend.LanguageBackend
@@ -11,6 +13,7 @@ import com.prism.backend.Section
 import com.prism.backend.SectionKind
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.io.path.writeText
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
@@ -45,10 +48,41 @@ class CapsuleBuilderTest : LightJavaCodeInsightFixtureTestCase() {
         val kinds = sections.map { it.jsonObject.getValue("kind").jsonPrimitive.content }
         val text = sections.joinToString("\n") { it.jsonObject.getValue("text").jsonPrimitive.content }
 
+        assertEquals("java", root.getValue("backend").jsonPrimitive.content)
+        assertEquals("full", root.getValue("skeletonAccuracy").jsonPrimitive.content)
         assertEquals(listOf(SectionKind.TARGET.name, SectionKind.OWNING_SKELETON.name), kinds)
         assertTrue(text.contains("return value + 2"))
         assertTrue(text.contains("int helper()"))
         assertTrue(text.contains("{ /* body omitted */ }"))
+    }
+
+    fun testBuildReturnsTargetAndSkeletonForKotlinFunction() = runBlocking {
+        val source = """
+            class Sample {
+                fun helper(): Int {
+                    return 1
+                }
+
+                fun selected(): Int {
+                    val value = helper()
+                    return value + 1
+                }
+            }
+        """.trimIndent()
+        val filePath = createProjectFile("Sample.kt", source)
+        val line = source.lines().indexOfFirst { "val value" in it } + 1
+
+        val root = buildCapsule(filePath.toString(), line)
+        val sections = root.getValue("sections").jsonArray
+        val kinds = sections.map { it.jsonObject.getValue("kind").jsonPrimitive.content }
+        val text = sections.joinToString("\n") { it.jsonObject.getValue("text").jsonPrimitive.content }
+
+        assertEquals("kotlin-uast", root.getValue("backend").jsonPrimitive.content)
+        assertEquals("full", root.getValue("skeletonAccuracy").jsonPrimitive.content)
+        assertTrue(SectionKind.TARGET.name in kinds)
+        assertTrue(SectionKind.OWNING_SKELETON.name in kinds)
+        assertTrue(text.contains("return value + 1"))
+        assertTrue(text.contains("fun helper(): Int { /* body omitted */ }"))
     }
 
     fun testBuildReturnsOmittedTargetForLineOutOfRange() = runBlocking {
@@ -96,6 +130,52 @@ class CapsuleBuilderTest : LightJavaCodeInsightFixtureTestCase() {
             omitted.any { entry ->
                 entry.jsonObject.getValue("kind").jsonPrimitive.content == SectionKind.OWNING_SKELETON.name &&
                     entry.jsonObject.getValue("reason").jsonPrimitive.content == "budget exceeded"
+            },
+        )
+    }
+
+    fun testBuildPublishesNavigationTreeForIncludedSectionsWithoutChangingJsonSchema() = runBlocking {
+        val source = """
+            class NavigationSample {
+                int helper() {
+                    return 1;
+                }
+
+                int selected() {
+                    return helper();
+                }
+            }
+        """.trimIndent()
+        val filePath = createProjectFile("NavigationSample.java", source)
+        val line = source.lines().indexOfFirst { "return helper" in it } + 1
+        val published = AtomicReference<CapsulePublishedEvent>()
+        project.messageBus.connect(testRootDisposable).subscribe(
+            CapsulePublishedTopic.TOPIC,
+            CapsulePublishedListener { event -> published.set(event) },
+        )
+
+        val root = buildCapsule(filePath.toString(), line, budget = 2000)
+        val event = published.get()
+        val section = root.getValue("sections").jsonArray.first().jsonObject
+
+        assertEquals(setOf("kind", "priority", "text", "tokens"), section.keys)
+        assertTrue("tree" !in root.keys)
+        assertTrue("navigation" !in section.keys)
+        assertTrue("requestContext" !in root.keys)
+        assertEquals(event.capsuleJson, root.toString())
+        assertEquals(project, event.requestContext!!.project)
+        assertEquals(filePath.toString(), event.requestContext!!.filePath)
+        assertEquals(line, event.requestContext!!.line)
+        assertEquals(2000, event.requestContext!!.budget)
+        assertEquals("NavigationSample.selected()", event.tree!!.root.label)
+        assertTrue(event.tree.root.pointer!!.element!!.isValid)
+        assertTrue(
+            event.tree.root.children.any { group ->
+                group.label == SectionKind.INTERNAL_CALLEES.name &&
+                    group.children.any { child ->
+                        child.label == "NavigationSample.helper()" &&
+                            child.pointer!!.element!!.isValid
+                    }
             },
         )
     }
@@ -194,9 +274,47 @@ class CapsuleBuilderTest : LightJavaCodeInsightFixtureTestCase() {
         })
         assertTrue(
             omitted.any { entry ->
-                entry.jsonObject.getValue("kind").jsonPrimitive.content == SectionKind.INTERNAL_CALLEES.name &&
+                entry.jsonObject.getValue("kind").jsonPrimitive.content == SectionKind.CALLEES_PARTIAL.name &&
                     entry.jsonObject.getValue("reason").jsonPrimitive.content == "extractCallees: timeout"
             },
+        )
+    }
+
+    fun testBuildUsesResolvedFilesForTransitiveNaiveBaseline() = runBlocking {
+        val helperFile = myFixture.configureByText(
+            "Helper.java",
+            """
+                class Helper {
+                    int help() {
+                        return 7;
+                    }
+                }
+            """.trimIndent(),
+        )
+        val helperElement = PsiTreeUtil.findChildrenOfType(helperFile, PsiElement::class.java)
+            .first { it.text == "help" }
+        val source = """
+            class UsesHelper {
+                int selected() {
+                    return new Helper().help();
+                }
+            }
+        """.trimIndent()
+        val filePath = createProjectFile("UsesHelper.java", source)
+        val line = source.lines().indexOfFirst { "return new Helper" in it } + 1
+        val builder = CapsuleBuilder(
+            backendFactory = { _, _ -> ExternalNavigationBackend(helperElement) },
+        )
+
+        val root = Json.parseToJsonElement(
+            builder.build(project, filePath.toString(), line, budget = 2000),
+        ).jsonObject
+        val stats = root.getValue("stats").jsonObject
+
+        assertTrue(
+            stats.toString(),
+            stats.getValue("transitiveNaiveTokens").jsonPrimitive.int >
+                stats.getValue("naiveTokens").jsonPrimitive.int,
         )
     }
 
@@ -250,5 +368,29 @@ class CapsuleBuilderTest : LightJavaCodeInsightFixtureTestCase() {
             Thread.sleep(200)
             return BackendResult(listOf(Section(SectionKind.INTERNAL_CALLEES, "slow()", tokens = 1)))
         }
+    }
+
+    private class ExternalNavigationBackend(
+        private val helperElement: PsiElement,
+    ) : LanguageBackend {
+        override fun extractTarget(element: PsiElement): Section =
+            Section(SectionKind.TARGET, element.text, tokens = 1)
+
+        override fun extractOwningClassSkeleton(element: PsiElement): Section? = null
+
+        override fun extractCallees(element: PsiElement): BackendResult =
+            BackendResult(
+                listOf(
+                    Section(
+                        SectionKind.EXTERNAL_CALLEES,
+                        "int help()",
+                        tokens = 1,
+                        navigation = CapsuleNavigationTarget(
+                            "Helper.help()",
+                            SmartPointerManager.createPointer(helperElement),
+                        ),
+                    ),
+                ),
+            )
     }
 }

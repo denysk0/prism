@@ -66,11 +66,20 @@ class CapsuleRendererTest {
         val stats = CapsuleStats(tokens = 4, budget = 100, naiveTokens = 16, savedPct = 75.0)
         val omitted = listOf(OmittedSection(SectionKind.CALLERS, "timeout"))
 
-        val root = Json.parseToJsonElement(CapsuleRenderer.toJson(sections, stats, omitted)).jsonObject
+        val root = Json.parseToJsonElement(
+            CapsuleRenderer.toJson(
+                sections,
+                stats,
+                omitted,
+                CapsuleMetadata(backend = "kotlin-uast", skeletonAccuracy = "full"),
+            ),
+        ).jsonObject
         val renderedSection = root.getValue("sections").jsonArray.single().jsonObject
         val renderedOmitted = root.getValue("omitted").jsonArray.single().jsonObject
         val renderedStats = root.getValue("stats").jsonObject
 
+        assertEquals("kotlin-uast", root.getValue("backend").jsonPrimitive.content)
+        assertEquals("full", root.getValue("skeletonAccuracy").jsonPrimitive.content)
         assertEquals("TARGET", renderedSection.getValue("kind").jsonPrimitive.content)
         assertEquals(100, renderedSection.getValue("priority").jsonPrimitive.int)
         assertEquals("println(\"hello\")", renderedSection.getValue("text").jsonPrimitive.content)

@@ -10,9 +10,12 @@ import com.intellij.psi.PsiClassType
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiMethod
 import com.intellij.psi.PsiMethodCallExpression
+import com.intellij.psi.PsiModifier
 import com.intellij.psi.PsiSubstitutor
 import com.intellij.psi.PsiType
+import com.intellij.psi.SmartPointerManager
 import com.intellij.psi.util.PsiTreeUtil
+import com.prism.core.CapsuleNavigationTarget
 import com.prism.core.CharsBy4Estimator
 import com.prism.core.OmittedSection
 import com.prism.core.TokenEstimator
@@ -20,6 +23,8 @@ import com.prism.core.TokenEstimator
 class JavaBackend(
     private val estimator: TokenEstimator = CharsBy4Estimator,
 ) : LanguageBackend {
+    override val backendId: String = "java"
+
     override fun extractTarget(element: PsiElement): Section? =
         when (element) {
             is PsiMethod,
@@ -28,6 +33,7 @@ class JavaBackend(
                 SectionKind.TARGET,
                 element.text,
                 estimator.estimate(element.text),
+                navigation = navigationTarget(element, javaLabel(element)),
             )
 
             else -> null
@@ -46,6 +52,8 @@ class JavaBackend(
             SectionKind.OWNING_SKELETON,
             text,
             estimator.estimate(text),
+            navigation = navigationTarget(owningClass, javaLabel(owningClass)),
+            reduced = reducedOwningClassSkeleton(owningClass, targetMethod),
         )
     }
 
@@ -69,13 +77,18 @@ class JavaBackend(
                 SectionKind.EXTERNAL_CALLEES
             }
             val text = calleeContext(method)
-            Section(kind, text, estimator.estimate(text))
+            Section(
+                kind,
+                text,
+                estimator.estimate(text),
+                navigation = navigationTarget(method, javaLabel(method)),
+            )
         }
 
         val omitted = if (resolved.size > MAX_CALLEES) {
             listOf(
                 OmittedSection(
-                    SectionKind.INTERNAL_CALLEES,
+                    omittedCalleesKind(resolved.drop(MAX_CALLEES), targetFile),
                     "cap reached: ${resolved.size - MAX_CALLEES} callees omitted",
                 ),
             )
@@ -109,7 +122,12 @@ class JavaBackend(
         val limited = resolved.take(MAX_CALLERS)
         val callers = limited.map { method ->
             val text = calleeContext(method)
-            Section(SectionKind.CALLERS, text, estimator.estimate(text))
+            Section(
+                SectionKind.CALLERS,
+                text,
+                estimator.estimate(text),
+                navigation = navigationTarget(method, javaLabel(method)),
+            )
         }
 
         val omitted = if (resolved.size > MAX_CALLERS) {
@@ -141,7 +159,12 @@ class JavaBackend(
             .filter { psiClass -> seen.add(classKey(psiClass)) }
             .map { psiClass ->
                 val text = classSkeleton(psiClass, targetMethod = null)
-                Section(SectionKind.RELEVANT_TYPES, text, estimator.estimate(text))
+                Section(
+                    SectionKind.RELEVANT_TYPES,
+                    text,
+                    estimator.estimate(text),
+                    navigation = navigationTarget(psiClass, javaLabel(psiClass)),
+                )
             }
             .toList()
 
@@ -211,6 +234,26 @@ class JavaBackend(
             append("}")
         }
 
+    private fun reducedOwningClassSkeleton(psiClass: PsiClass, targetMethod: PsiMethod?): Section {
+        val text = buildString {
+            append(classSignature(psiClass))
+            append(" {\n")
+
+            psiClass.methods
+                .filterNot { method -> targetMethod != null && method.isEquivalentTo(targetMethod) }
+                .filter { method -> method.hasModifierProperty(PsiModifier.PUBLIC) }
+                .forEach { method -> appendMember(methodSkeleton(method)) }
+
+            append("}")
+        }
+        return Section(
+            SectionKind.OWNING_SKELETON,
+            text,
+            estimator.estimate(text).coerceAtLeast(1),
+            navigation = navigationTarget(psiClass, javaLabel(psiClass)),
+        )
+    }
+
     private fun methodSkeleton(method: PsiMethod): String {
         val body = method.body ?: return method.text.trimEnd()
         return methodSignature(method) + " { /* body omitted */ }"
@@ -262,6 +305,22 @@ class JavaBackend(
         return "$owner#${signature.name}($parameters)"
     }
 
+    private fun omittedCalleesKind(omitted: List<PsiMethod>, targetFile: com.intellij.openapi.vfs.VirtualFile?): SectionKind {
+        val kinds = omitted.map { method ->
+            if (method.containingFile?.virtualFile == targetFile) {
+                SectionKind.INTERNAL_CALLEES
+            } else {
+                SectionKind.EXTERNAL_CALLEES
+            }
+        }.toSet()
+
+        return when {
+            kinds.size > 1 -> SectionKind.CALLEES_PARTIAL
+            kinds.singleOrNull() == SectionKind.EXTERNAL_CALLEES -> SectionKind.EXTERNAL_CALLEES
+            else -> SectionKind.INTERNAL_CALLEES
+        }
+    }
+
     private fun collectClassTypes(type: PsiType?, into: MutableList<PsiClass>) {
         when (type) {
             null -> return
@@ -286,6 +345,22 @@ class JavaBackend(
 
     private fun classKey(psiClass: PsiClass): String =
         psiClass.qualifiedName ?: psiClass.containingFile?.virtualFile?.path.orEmpty() + "#" + psiClass.name
+
+    private fun navigationTarget(element: PsiElement, label: String): CapsuleNavigationTarget =
+        CapsuleNavigationTarget(
+            label = label,
+            pointer = SmartPointerManager.createPointer(element),
+        )
+
+    private fun javaLabel(element: PsiElement): String =
+        when (element) {
+            is PsiMethod -> {
+                val owner = element.containingClass?.name
+                if (owner.isNullOrBlank()) element.name else "$owner.${element.name}()"
+            }
+            is PsiClass -> element.qualifiedName ?: element.name ?: "class"
+            else -> element.containingFile?.name ?: "target"
+        }
 
     private fun StringBuilder.appendMember(text: String) {
         text.trimIndent().lineSequence().forEach { line ->

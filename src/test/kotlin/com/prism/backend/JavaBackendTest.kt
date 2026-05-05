@@ -114,6 +114,42 @@ class JavaBackendTest : LightJavaCodeInsightFixtureTestCase() {
         assertTrue(text.contains("    \"a\","))
     }
 
+    fun testExtractOwningClassSkeletonProvidesReducedPublicSkeleton() {
+        val file = myFixture.configureByText(
+            "Sample.java",
+            """
+                public class Sample {
+                    public Sample() {
+                    }
+
+                    public static <T> T convert(T value) {
+                        return value;
+                    }
+
+                    public int selected() {
+                        return 42;
+                    }
+
+                    private int hidden() {
+                        return 7;
+                    }
+                }
+            """.trimIndent(),
+        )
+        val method = PsiTreeUtil.findChildrenOfType(file, PsiMethod::class.java)
+            .single { it.name == "selected" }
+
+        val reduced = JavaBackend().extractOwningClassSkeleton(method)!!.reduced
+
+        assertNotNull(reduced)
+        val text = reduced!!.text
+        assertTrue(text.contains("public Sample()"))
+        assertTrue(text.contains("public static <T> T convert(T value)"))
+        assertFalse(text.contains("public int selected()"))
+        assertFalse(text.contains("private int hidden()"))
+        assertFalse(text.contains("return value"))
+    }
+
     fun testExtractCalleesReturnsResolvedDistinctMethods() {
         val file = myFixture.configureByText(
             "Sample.java",

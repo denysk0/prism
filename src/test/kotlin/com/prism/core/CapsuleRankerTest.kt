@@ -78,6 +78,37 @@ class CapsuleRankerTest {
     }
 
     @Test
+    fun `fit uses backend supplied reduced owning skeleton`() {
+        val target = section(SectionKind.TARGET, text = "target", tokens = 20)
+        val reduced = section(
+            SectionKind.OWNING_SKELETON,
+            text = """
+                class Sample {
+                    public static int visible() { /* body omitted */ }
+                }
+            """.trimIndent(),
+            tokens = 15,
+        )
+        val skeleton = Section(
+            SectionKind.OWNING_SKELETON,
+            text = """
+                class Sample {
+                    private int secret;
+                    public static int visible() { /* body omitted */ }
+                }
+            """.trimIndent(),
+            tokens = 100,
+            reduced = reduced,
+        )
+
+        val result = CapsuleRanker.fit(listOf(target, skeleton), budget = 40)
+        val includedSkeleton = result.included.single { section -> section.kind == SectionKind.OWNING_SKELETON }
+
+        assertEquals(reduced.text, includedSkeleton.text)
+        assertTrue(result.omitted.isEmpty())
+    }
+
+    @Test
     fun `fit omits owning skeleton when reduced skeleton cannot fit`() {
         val target = section(SectionKind.TARGET, text = "target", tokens = 40)
         val skeleton = section(
