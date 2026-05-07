@@ -1,0 +1,18 @@
+You are investigating a local Ktor bug based on issue #5412.
+
+Do not use JetBrains MCP or Prism.
+Do not open GitHub or look up the upstream PR.
+Do not edit files yet.
+Do not run tests yet.
+
+Repository:
+/private/tmp/prism-demo/ktor-zstd
+
+Bug:
+A Ktor client configured to decode `Content-Encoding: zstd` crashes on large compressed responses with `ClosedByteChannelException: Destination buffer is too small`. Small zstd responses work. The failure appears only when the compressed response is large enough to be split into multiple zstd frames/chunks.
+
+- find the minimal production method that should change;
+- find the focused test file or nearest existing test location;
+- explain the smallest patch strategy;
+- list every file you read fully and every search query you used;
+- stop before editing.
