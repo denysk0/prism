@@ -41,7 +41,7 @@ Naive baseline is the full source file. On large files the skeleton alone exceed
 
 ## Install
 
-Download `prism-*.zip` from [Releases](../../releases) or build from source: `./gradlew buildPlugin` → `build/distributions/prism-0.1.0.zip`.
+Download `prism-*.zip` from [Releases](https://github.com/denysk0/prism/releases) or build from source: `./gradlew buildPlugin` → `build/distributions/prism-0.1.0.zip`.
 
 Install in IDEA 2025.2+: Settings → Plugins → gear → Install Plugin from Disk.
 
