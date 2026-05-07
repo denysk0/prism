@@ -31,7 +31,12 @@ dependencies {
     implementation("com.knuddels:jtokkit:1.1.0")
 
     intellijPlatform {
-        local(providers.gradleProperty("localIdeaPath"))
+        val localPath = providers.gradleProperty("localIdeaPath").orNull
+        if (localPath != null && file(localPath).exists()) {
+            local(localPath)
+        } else {
+            intellijIdeaCommunity(providers.gradleProperty("platformVersion"))
+        }
         bundledPlugin("com.intellij.java")
         bundledPlugin("com.intellij.mcpServer")
         bundledPlugin("org.jetbrains.kotlin")
