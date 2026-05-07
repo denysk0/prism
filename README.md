@@ -1,15 +1,14 @@
 # Prism
 
-IntelliJ plugin that gives coding agents a token-budgeted view of the code they're actually working on. Aider's repomap, but IDE-native.
+IntelliJ plugin that gives coding agents a token-budgeted view of the code they're actually working on. [Aider's repomap](https://aider.chat/docs/repomap.html), but IDE-native.
+
+[What it does](#what-it-does) · [Benchmark](#benchmark) · [Install](#install) · [Usage](#usage) · [Limitations](#limitations)
 
 ## What it does
 
 `get_context_capsule(filePath, line, budget)` returns a JSON capsule with the target method, its class skeleton, callees, callers, and relevant types. Sections are priority-ranked and greedy-fit to the token budget. Anything that doesn't fit goes into `omitted` with a reason.
 
 The Tool Window shows what the agent received so you can see it too.
-
-Java and Kotlin are fully supported via [PSI](https://plugins.jetbrains.com/docs/intellij/psi.html) and [UAST](https://plugins.jetbrains.com/docs/intellij/uast.html).
-
 
 ## Benchmark
 
@@ -86,7 +85,7 @@ reading production files. Pass the file and line of the suspicious method.
 ## Future work
 
 - Non-JVM backends via tree-sitter.
-- PageRank-style ranking on the PSI reference graph.
+- PageRank-style ranking on the call graph (closer to how Aider does it).
 - Capsule diff between two calls.
 
 ---
